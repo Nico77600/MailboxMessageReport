@@ -57,8 +57,8 @@
     Csv, Html or both. Default: Report.Formats. A Summary.json file is always written.
 
 .PARAMETER HtmlMaxMessages
-    Messages shown in a HTML report (the CSV file holds them all). Default: Report.HtmlMaxMessages (20,000); up to
-    200,000 (tested: a report of 118 MB, open in about 3 s).
+    The most messages of a HTML report (every message below it; the CSV file holds them all). Default:
+    Report.HtmlMaxMessages (500,000); 0 to 2,000,000.
 
 .PARAMETER Gui
     Opens the window: the same search, the same report, a preview of the first messages.
@@ -100,7 +100,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.1
+    Version : 2.0.0
     Exit codes : 0 = completed, 1 = failed, 2 = finished with warnings (a mailbox or a folder not read...).
     Documentation : docs\MailboxMessageReport-UserGuide.html (user guide: prerequisites, everyday commands) and
                     docs\MailboxMessageReport-Guide.html (developer guide); sources: docs\*.md

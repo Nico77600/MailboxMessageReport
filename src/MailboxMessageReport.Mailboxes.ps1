@@ -20,7 +20,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.1
+    Version : 2.0.0
 #>
 
 function Get-MmrUserPath {

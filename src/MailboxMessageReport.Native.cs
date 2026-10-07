@@ -10,14 +10,17 @@
 //               method called from PowerShell with a string of 1 MB costs about 100 ms: the argument is scanned)
 //   Columns     the columns of the messages, in the order of the CSV files
 //   PartWriter  the part file of one folder: the rows of each page appended to it
-//   CsvTarget   a CSV file written row by row (UTF-8 with BOM, formula injection neutralised)
-//   RowBuffer   the first rows of a merge, kept as JSON for the HTML report and the window
-//   Merge       a part file appended to CSV files and row buffers; the HTML report written from its template
+//   CsvTarget   a CSV file written row by row (UTF-8 with BOM, formula injection neutralised, cells within the
+//               32,767 characters of an Excel cell)
+//   RowBuffer   the first rows of a merge, kept as JSON for the preview of the window
+//   HtmlReport  the HTML report: its template, and every message in compressed blocks of columns (as the HTML
+//               report of Purview DLP Report: JSON -> gzip -> base64, repeated texts once in dictionaries)
+//   Merge       a part file appended to CSV files, row buffers and HTML reports
 //   Fast        dates, CSV cells
 //   PreviewRow  a message in the window; BulkCollection, the list bound to the window
 //
 // Author : Nicolas Fabert
-// Version: 1.1.1
+// Version: 2.0.0
 
 using System;
 using System.Collections;
@@ -27,6 +30,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -57,8 +61,23 @@ namespace MailboxMessageReportNative
         /// <summary>One row per message: the columns of the CSV files, the HTML report and the part files, in this order.</summary>
         public static readonly string[] Messages = {
             "Mailbox", "MailboxName", "Location", "RecoverableItems", "FolderPath", "Folder", "Received", "Sent", "Subject",
-            "From", "FromName", "Sender", "To", "Cc", "Bcc", "InternetMessageId", "HasAttachments", "Importance", "IsRead",
-            "Type", "ReceivedUtc", "ItemId" };
+            "From", "FromName", "Sender", "To", "Cc", "Bcc", "RecipientCount", "InternetMessageId", "HasAttachments", "Importance",
+            "IsRead", "Type", "ReceivedUtc", "ItemId" };
+
+        // The position of each column in a row (part files, CSV files): the code reads the cells by these.
+        public static readonly int IMailbox = Index("Mailbox"), IMailboxName = Index("MailboxName"), ILocation = Index("Location"),
+            IRecoverable = Index("RecoverableItems"), IFolderPath = Index("FolderPath"), IFolder = Index("Folder"), IReceived = Index("Received"),
+            ISent = Index("Sent"), ISubject = Index("Subject"), IFrom = Index("From"), IFromName = Index("FromName"), ISender = Index("Sender"),
+            ITo = Index("To"), ICc = Index("Cc"), IBcc = Index("Bcc"), IRecipientCount = Index("RecipientCount"), IMessageId = Index("InternetMessageId"),
+            IAttachments = Index("HasAttachments"), IImportance = Index("Importance"), IIsRead = Index("IsRead"), IType = Index("Type"),
+            IReceivedUtc = Index("ReceivedUtc"), IItemId = Index("ItemId");
+
+        static int Index(string name)
+        {
+            var i = Array.IndexOf(Messages, name);
+            if (i < 0) { throw new InvalidOperationException("Unknown column " + name); }
+            return i;
+        }
 
         /// <summary>The Microsoft Graph properties read for each message ($select).</summary>
         public const string Select = "id,subject,receivedDateTime,sentDateTime,from,sender,toRecipients,ccRecipients,bccRecipients,internetMessageId,hasAttachments,importance,isRead";
@@ -66,7 +85,7 @@ namespace MailboxMessageReportNative
 
     public static class Fast
     {
-        public const string Version = "1.1.1";
+        public const string Version = "2.0.0";
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
         /// <summary>A UTC date shown in a time zone: yyyy-MM-dd HH:mm (or HH:mm:ss, or yyyy-MM-dd). -PeriodEnd: 00:00 shows the day before.</summary>
@@ -89,10 +108,32 @@ namespace MailboxMessageReportNative
             return local.ToString(dateOnly ? "yyyy-MM-dd" : (seconds ? "yyyy-MM-dd HH:mm:ss" : "yyyy-MM-dd HH:mm"), Inv);
         }
 
-        /// <summary>A CSV cell: text starting with = + - @ (or tab, CR) prefixed with an apostrophe; quoted when needed.</summary>
+        /// <summary>The most characters of a cell of Excel; a longer cell breaks the rows of a CSV file opened in Excel.</summary>
+        public const int ExcelCellMax = 32767;
+
+        /// <summary>
+        /// A text within an Excel cell (32,000 characters: room for the apostrophe and the quotes). A list (To, Cc, Bcc:
+        /// "a; b; c") is cut after its last whole address, with the number of the others: "a; b; ... (+9,800 more)".
+        /// </summary>
+        public static string ExcelText(string text)
+        {
+            const int max = 32000;
+            if (text == null || text.Length <= max) { return text; }
+            var cut = text.LastIndexOf("; ", max - 40, StringComparison.Ordinal);
+            if (cut > 0)
+            {
+                long more = 0;
+                for (var i = cut; (i = text.IndexOf("; ", i, StringComparison.Ordinal)) >= 0; i += 2) { more++; }
+                return text.Substring(0, cut) + "; \u2026 (+" + more.ToString("N0", CultureInfo.InvariantCulture) + " more)";
+            }
+            return text.Substring(0, max - 20) + " \u2026 (cut)";
+        }
+
+        /// <summary>A CSV cell: text starting with = + - @ (or tab, CR) prefixed with an apostrophe; quoted when needed; within an Excel cell.</summary>
         public static string CsvCell(string text, string delimiter)
         {
             if (string.IsNullOrEmpty(text)) { return ""; }
+            text = ExcelText(text);
             if ("=+-@\t\r".IndexOf(text[0]) >= 0) { text = "'" + text; }
             if (text.Contains(delimiter) || text.Contains("\"") || text.IndexOf('\r') >= 0 || text.IndexOf('\n') >= 0) { text = "\"" + text.Replace("\"", "\"\"") + "\""; }
             return text;
@@ -201,9 +242,14 @@ namespace MailboxMessageReportNative
             _json.WriteStringValue(Address(m, "from", "address"));
             _json.WriteStringValue(Address(m, "from", "name"));
             _json.WriteStringValue(Address(m, "sender", "address"));
-            _json.WriteStringValue(Recipients(m, "toRecipients"));
-            _json.WriteStringValue(Recipients(m, "ccRecipients"));
-            _json.WriteStringValue(Recipients(m, "bccRecipients"));
+            int to, cc, bcc;
+            _json.WriteStringValue(Recipients(m, "toRecipients", out to));
+            _json.WriteStringValue(Recipients(m, "ccRecipients", out cc));
+            _json.WriteStringValue(Recipients(m, "bccRecipients", out bcc));
+            // Empty when the recipients were not asked (-SkipRecipients), not 0.
+            JsonElement any;
+            var asked = m.TryGetProperty("toRecipients", out any) || m.TryGetProperty("ccRecipients", out any) || m.TryGetProperty("bccRecipients", out any);
+            _json.WriteStringValue(asked ? (to + cc + bcc).ToString(Inv) : "");
             _json.WriteStringValue(Str(m, "internetMessageId"));
             _json.WriteStringValue(Bool(m, "hasAttachments"));
             _json.WriteStringValue(Title(Str(m, "importance")));
@@ -292,9 +338,10 @@ namespace MailboxMessageReportNative
         }
 
         /// <summary>The addresses of a recipient list, separated by "; " (the name when a recipient has no address).</summary>
-        static string Recipients(JsonElement o, string property)
+        static string Recipients(JsonElement o, string property, out int count)
         {
             JsonElement list;
+            count = 0;
             if (!o.TryGetProperty(property, out list) || list.ValueKind != JsonValueKind.Array) { return ""; }
             var sb = new StringBuilder();
             foreach (var r in list.EnumerateArray())
@@ -309,6 +356,7 @@ namespace MailboxMessageReportNative
                 if (text.Length == 0) { continue; }
                 if (sb.Length > 0) { sb.Append("; "); }
                 sb.Append(text);
+                count++;
             }
             return sb.ToString();
         }
@@ -378,70 +426,237 @@ namespace MailboxMessageReportNative
         }
     }
 
+    /// <summary>
+    /// The HTML report of a run or of a mailbox, written as it goes: its template up to {{MESSAGES}}, then the messages
+    /// in blocks of columns (JSON, gzip, base64: script blocks the page decompresses), then the rest of the template.
+    /// The texts repeated from row to row (folders, subjects, addresses, names, kinds) are stored once, in dictionaries
+    /// that each block extends: a report of hundreds of thousands of messages stays small and opens in seconds. The same
+    /// design as the HTML report of Purview DLP Report.
+    /// Markers ({{NAME}}): given when the report is opened (those before the messages) or closed (those after); every
+    /// marker of the template must have a value, and every value a marker.
+    /// </summary>
+    public sealed class HtmlReport : IDisposable
+    {
+        public const string MessagesMarker = "{{MESSAGES}}";
+        static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
+        static readonly DateTime Epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        static readonly JsonWriterOptions JsonOptions = new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, SkipValidation = true };
+        static readonly string[] ListSeparator = { "; " };
+        readonly StreamWriter _w;
+        readonly string _suffix;
+        readonly int _blockRows;
+        readonly Dictionary<string, string> _values = new Dictionary<string, string>(StringComparer.Ordinal);
+        readonly HashSet<string> _used = new HashSet<string>(StringComparer.Ordinal);
+        bool _closed;
+        // Dictionaries of the file, and their entries not yet written (the next block carries them).
+        readonly Dictionary<string, int> _folders = new Dictionary<string, int>(StringComparer.Ordinal);
+        readonly List<string[]> _newFolders = new List<string[]>();
+        readonly Dictionary<string, int> _subjects = new Dictionary<string, int>(StringComparer.Ordinal);
+        readonly List<string> _newSubjects = new List<string>();
+        readonly Dictionary<string, int> _people = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        readonly List<string> _newPeople = new List<string>();
+        readonly Dictionary<string, int> _names = new Dictionary<string, int>(StringComparer.Ordinal);
+        readonly List<string> _newNames = new List<string>();
+        readonly Dictionary<string, int> _kinds = new Dictionary<string, int>(StringComparer.Ordinal);
+        readonly List<string> _newKinds = new List<string>();
+        // The columns of the block in course (one entry per message; ri: the recipients of every message, in a row).
+        readonly List<int> _f = new List<int>(), _o = new List<int>(), _j = new List<int>(), _p = new List<int>(), _n = new List<int>(), _s = new List<int>();
+        readonly List<int> _tl = new List<int>(), _cl = new List<int>(), _bl = new List<int>(), _ri = new List<int>(), _x = new List<int>(), _k = new List<int>();
+        readonly List<long?> _r = new List<long?>(), _d = new List<long?>();
+        readonly List<string> _m = new List<string>();
+
+        public HtmlReport(string templatePath, string outputPath, int maxRows, int blockRows, string[] markers, string[] values)
+        {
+            Path = outputPath;
+            Max = Math.Max(0, maxRows);
+            _blockRows = Math.Max(1, blockRows);
+            var template = File.ReadAllText(templatePath, Encoding.UTF8);
+            var at = template.IndexOf(MessagesMarker, StringComparison.Ordinal);
+            if (at < 0 || at != template.LastIndexOf(MessagesMarker, StringComparison.Ordinal)) { throw new InvalidDataException("The report template must hold " + MessagesMarker + " exactly once: " + templatePath); }
+            Set(markers, values);
+            _suffix = template.Substring(at + MessagesMarker.Length);
+            var prefix = Replace(template.Substring(0, at));
+            _w = new StreamWriter(outputPath, false, new UTF8Encoding(true), 1 << 16);
+            _w.Write(prefix);
+        }
+
+        public string Path { get; private set; }
+        /// <summary>The most messages of this file (Report.HtmlMaxMessages).</summary>
+        public int Max { get; private set; }
+        /// <summary>The messages written; Seen: the messages given (more than Rows when Max was reached).</summary>
+        public long Rows { get; private set; }
+        public long Seen { get; private set; }
+        public int Blocks { get; private set; }
+
+        void Set(string[] markers, string[] values)
+        {
+            if (markers == null) { return; }
+            for (int i = 0; i < markers.Length; i++) { _values[markers[i]] = values != null && i < values.Length && values[i] != null ? values[i] : ""; }
+        }
+
+        // The markers are found in the template first: a value that holds the text of a marker (a subject) is never touched.
+        string Replace(string text)
+        {
+            var sb = new StringBuilder(text.Length + 1024);
+            int last = 0;
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(text, @"\{\{[A-Z_]+\}\}"))
+            {
+                string v;
+                if (!_values.TryGetValue(m.Value, out v)) { throw new InvalidOperationException("Report template marker not replaced: " + m.Value); }
+                if (!_used.Add(m.Value)) { throw new InvalidOperationException("Report template marker found twice: " + m.Value); }
+                sb.Append(text, last, m.Index - last).Append(v);
+                last = m.Index + m.Length;
+            }
+            sb.Append(text, last, text.Length - last);
+            return sb.ToString();
+        }
+
+        static int Index(Dictionary<string, int> map, List<string> added, string value)
+        {
+            value = value ?? "";
+            int i;
+            if (!map.TryGetValue(value, out i)) { i = map.Count; map.Add(value, i); added.Add(value); }
+            return i;
+        }
+
+        /// <summary>A local date and time of a row (yyyy-MM-dd HH:mm:ss, or the UTC one with T and Z) as seconds: the page shows them as they are.</summary>
+        static long? Seconds(string text)
+        {
+            DateTime d;
+            if (string.IsNullOrEmpty(text)) { return null; }
+            if (!DateTime.TryParseExact(text, new[] { "yyyy-MM-dd HH:mm:ss", "yyyy-MM-ddTHH:mm:ssZ" }, Inv, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out d)) { return null; }
+            return (d - Epoch).Ticks / TimeSpan.TicksPerSecond;
+        }
+
+        int AddList(string list)
+        {
+            if (string.IsNullOrEmpty(list)) { return 0; }
+            int n = 0;
+            foreach (var a in list.Split(ListSeparator, StringSplitOptions.RemoveEmptyEntries)) { _ri.Add(Index(_people, _newPeople, a)); n++; }
+            return n;
+        }
+
+        /// <summary>One message (the cells of a part file, in the order of Columns.Messages).</summary>
+        public void Add(string[] c)
+        {
+            Seen++;
+            if (Rows >= Max) { return; }
+            Rows++;
+            var recoverable = c[Columns.IRecoverable] == "Yes";
+            var key = c[Columns.IMailbox] + "\u0001" + c[Columns.ILocation] + "\u0001" + (recoverable ? "1" : "0") + "\u0001" + c[Columns.IFolderPath];
+            int f;
+            if (!_folders.TryGetValue(key, out f))
+            {
+                f = _folders.Count;
+                _folders.Add(key, f);
+                _newFolders.Add(new[] { c[Columns.IMailbox], c[Columns.IMailboxName], c[Columns.ILocation], recoverable ? "1" : "0", c[Columns.IFolderPath], c[Columns.IFolder] });
+            }
+            _f.Add(f);
+            var received = Seconds(c[Columns.IReceived]);
+            var utc = Seconds(c[Columns.IReceivedUtc]);
+            _r.Add(received);
+            _o.Add(received.HasValue && utc.HasValue ? (int)((received.Value - utc.Value) / 60) : 0);
+            var sent = Seconds(c[Columns.ISent]);
+            _d.Add(received.HasValue && sent.HasValue ? received.Value - sent.Value : (long?)null);
+            _j.Add(Index(_subjects, _newSubjects, c[Columns.ISubject]));
+            var from = c[Columns.IFrom];
+            _p.Add(from.Length == 0 ? -1 : Index(_people, _newPeople, from));
+            var name = c[Columns.IFromName];
+            _n.Add(name.Length == 0 || string.Equals(name, from, StringComparison.OrdinalIgnoreCase) ? -1 : Index(_names, _newNames, name));
+            var sender = c[Columns.ISender];
+            _s.Add(sender.Length == 0 || string.Equals(sender, from, StringComparison.OrdinalIgnoreCase) ? -1 : Index(_people, _newPeople, sender));
+            _tl.Add(AddList(c[Columns.ITo]));
+            _cl.Add(AddList(c[Columns.ICc]));
+            _bl.Add(AddList(c[Columns.IBcc]));
+            _m.Add(c[Columns.IMessageId]);
+            int x = 0;
+            if (c[Columns.IAttachments] == "Yes") { x |= 1; }
+            if (c[Columns.IIsRead] == "Yes") { x |= 2; }
+            if (c[Columns.IImportance] == "High") { x |= 4; } else if (c[Columns.IImportance] == "Low") { x |= 8; }
+            if (c[Columns.IRecipientCount].Length == 0) { x |= 16; }
+            _x.Add(x);
+            _k.Add(Index(_kinds, _newKinds, c[Columns.IType]));
+            if (_f.Count >= _blockRows) { Flush(); }
+        }
+
+        static void Strings(Utf8JsonWriter j, string name, List<string> list) { j.WriteStartArray(name); foreach (var v in list) { j.WriteStringValue(v); } j.WriteEndArray(); }
+        static void Ints(Utf8JsonWriter j, string name, List<int> list) { j.WriteStartArray(name); foreach (var v in list) { j.WriteNumberValue(v); } j.WriteEndArray(); }
+        static void Longs(Utf8JsonWriter j, string name, List<long?> list) { j.WriteStartArray(name); foreach (var v in list) { if (v.HasValue) { j.WriteNumberValue(v.Value); } else { j.WriteNullValue(); } } j.WriteEndArray(); }
+
+        /// <summary>The block in course written: its new dictionary entries and its columns.</summary>
+        void Flush()
+        {
+            if (_f.Count == 0) { return; }
+            using (var raw = new MemoryStream())
+            {
+                using (var gzip = new GZipStream(raw, CompressionLevel.Optimal, true))
+                using (var j = new Utf8JsonWriter(gzip, JsonOptions))
+                {
+                    j.WriteStartObject();
+                    j.WriteStartArray("df");
+                    foreach (var folder in _newFolders) { j.WriteStartArray(); foreach (var v in folder) { j.WriteStringValue(v); } j.WriteEndArray(); }
+                    j.WriteEndArray();
+                    Strings(j, "dj", _newSubjects); Strings(j, "dp", _newPeople); Strings(j, "dn", _newNames); Strings(j, "dk", _newKinds);
+                    Ints(j, "f", _f); Longs(j, "r", _r); Ints(j, "o", _o); Longs(j, "d", _d); Ints(j, "j", _j); Ints(j, "p", _p); Ints(j, "n", _n); Ints(j, "s", _s);
+                    Ints(j, "tl", _tl); Ints(j, "cl", _cl); Ints(j, "bl", _bl); Ints(j, "ri", _ri); Strings(j, "m", _m); Ints(j, "x", _x); Ints(j, "k", _k);
+                    j.WriteEndObject();
+                }
+                _w.Write("<script type=\"application/x-mmr-block\">");
+                _w.Write(Convert.ToBase64String(raw.GetBuffer(), 0, (int)raw.Length));
+                _w.Write("</script>\n");
+            }
+            Blocks++;
+            _newFolders.Clear(); _newSubjects.Clear(); _newPeople.Clear(); _newNames.Clear(); _newKinds.Clear();
+            foreach (var l in new[] { _f, _o, _j, _p, _n, _s, _tl, _cl, _bl, _ri, _x, _k }) { l.Clear(); }
+            _r.Clear(); _d.Clear(); _m.Clear();
+        }
+
+        /// <summary>The last block, then the rest of the template with the markers given now (summary, mailboxes, folders).</summary>
+        public void Close(string[] markers, string[] values)
+        {
+            if (_closed) { return; }
+            Flush();
+            Set(markers, values);
+            _w.Write(Replace(_suffix));
+            foreach (var k in _values.Keys) { if (!_used.Contains(k)) { throw new InvalidOperationException("Report template marker missing: " + k); } }
+            _w.Dispose();
+            _closed = true;
+        }
+
+        public void Dispose()
+        {
+            if (_closed) { return; }
+            _w.Dispose();
+            _closed = true;
+        }
+    }
+
     public static class Merge
     {
-        /// <summary>
-        /// The HTML report: the template with its markers ({{NAME}}) replaced - the values given, the messages from their
-        /// buffer - written as UTF-8 with BOM. The markers are found in the template first: a value that holds the text
-        /// of a marker (a subject) is never touched. Every marker of the template must have a value, and the reverse.
-        /// </summary>
-        public static void WriteHtml(string templatePath, string outputPath, string[] markers, string[] values, RowBuffer messages, string messagesMarker)
-        {
-            var template = File.ReadAllText(templatePath, Encoding.UTF8);
-            var map = new Dictionary<string, string>(StringComparer.Ordinal);
-            for (int i = 0; i < markers.Length; i++) { map[markers[i]] = values[i] ?? ""; }
-            var used = new HashSet<string>(StringComparer.Ordinal);
-            var found = System.Text.RegularExpressions.Regex.Matches(template, @"\{\{[A-Z_]+\}\}");
-            foreach (System.Text.RegularExpressions.Match m in found)
-            {
-                if (m.Value != messagesMarker && !map.ContainsKey(m.Value)) { throw new InvalidOperationException("Report template marker not replaced: " + m.Value); }
-                if (!used.Add(m.Value)) { throw new InvalidOperationException("Report template marker found twice: " + m.Value); }
-            }
-            foreach (var k in map.Keys) { if (!used.Contains(k)) { throw new InvalidOperationException("Report template marker missing: " + k); } }
-            if (!used.Contains(messagesMarker)) { throw new InvalidOperationException("Report template marker missing: " + messagesMarker); }
-            // Written as it goes: the messages (up to hundreds of thousands) are never copied into one string.
-            using (var w = new StreamWriter(outputPath, false, new UTF8Encoding(true), 1 << 16))
-            {
-                int last = 0;
-                foreach (System.Text.RegularExpressions.Match m in found)
-                {
-                    w.Write(template.Substring(last, m.Index - last));
-                    if (m.Value == messagesMarker)
-                    {
-                        w.Write('[');
-                        if (messages != null)
-                        {
-                            for (int i = 0; i < messages.Lines.Count; i++) { if (i > 0) { w.Write(','); } w.Write(messages.Lines[i]); }
-                        }
-                        w.Write(']');
-                    }
-                    else { w.Write(map[m.Value]); }
-                    last = m.Index + m.Length;
-                }
-                w.Write(template.Substring(last));
-            }
-        }
-        /// <summary>The rows of a part file appended to CSV files and to row buffers, in the order of the file; returns how many rows.</summary>
-        public static long AppendPart(string path, CsvTarget[] csv, RowBuffer[] buffers)
+        /// <summary>The rows of a part file appended to CSV files, row buffers and HTML reports, in the order of the file; returns how many rows.</summary>
+        public static long AppendPart(string path, CsvTarget[] csv, RowBuffer[] buffers, HtmlReport[] html)
         {
             long n = 0;
             if (!File.Exists(path)) { return 0; }
             bool toCsv = csv != null && csv.Length > 0;
+            bool toHtml = html != null && html.Length > 0;
             foreach (var line in File.ReadLines(path, Encoding.UTF8))
             {
                 if (line.Length == 0) { continue; }
                 n++;
-                if (toCsv)
+                if (toCsv || toHtml)
                 {
                     var cells = Fast.ParseRow(line);
-                    foreach (var t in csv) { if (t != null) { t.Write(cells); } }
+                    if (toCsv) { foreach (var t in csv) { if (t != null) { t.Write(cells); } } }
+                    if (toHtml) { foreach (var h in html) { if (h != null) { h.Add(cells); } } }
                 }
                 if (buffers != null) { foreach (var b in buffers) { if (b != null) { b.Add(line); } } }
             }
             return n;
         }
-    }
 
+        public static long AppendPart(string path, CsvTarget[] csv, RowBuffer[] buffers) { return AppendPart(path, csv, buffers, null); }
+    }
     /// <summary>A message in the preview of the window (the flat list, the folder view and its reading pane).</summary>
     public sealed class PreviewRow : INotifyPropertyChanged
     {
@@ -485,16 +700,23 @@ namespace MailboxMessageReportNative
         /// <summary>One row from the cells of a part file.</summary>
         public static PreviewRow FromCells(string[] c)
         {
-            var recoverable = c[3] == "Yes";
-            var fromName = c[10].Length > 0 ? c[10] : c[9];
+            var recoverable = c[Columns.IRecoverable] == "Yes";
+            var location = c[Columns.ILocation];
+            var from = c[Columns.IFrom];
+            var name = c[Columns.IFromName];
+            var received = c[Columns.IReceived];
+            var fromName = name.Length > 0 ? name : from;
             return new PreviewRow
             {
-                Mailbox = c[0], MailboxName = c[1], Location = c[2] + (recoverable ? " (RI)" : ""), RecoverableItems = recoverable,
-                LocationText = (c[2] == "Archive" ? "Archive" : "Primary mailbox") + (recoverable ? " - Recoverable Items" : ""),
-                FolderPath = c[4], Folder = c[5], Received = c[6], ReceivedShort = c[6].Length >= 16 ? c[6].Substring(0, 16) : c[6], Sent = c[7], Subject = c[8].Length > 0 ? c[8] : "(no subject)",
-                From = c[9].Length > 0 ? c[9] : c[10], FromDisplay = fromName.Length > 0 ? fromName : "(no sender)", Sender = c[11], To = c[12], Cc = c[13], Bcc = c[14],
-                InternetMessageId = c[15], HasAttachments = c[16] == "Yes", AttachmentGlyph = c[16] == "Yes" ? "\uE723" : "", Importance = c[17], Type = c[19], ItemId = c[21],
-                FolderKey = Key(c[0], c[2], recoverable, c[4])
+                Mailbox = c[Columns.IMailbox], MailboxName = c[Columns.IMailboxName], Location = location + (recoverable ? " (RI)" : ""), RecoverableItems = recoverable,
+                LocationText = (location == "Archive" ? "Archive" : "Primary mailbox") + (recoverable ? " - Recoverable Items" : ""),
+                FolderPath = c[Columns.IFolderPath], Folder = c[Columns.IFolder], Received = received, ReceivedShort = received.Length >= 16 ? received.Substring(0, 16) : received,
+                Sent = c[Columns.ISent], Subject = c[Columns.ISubject].Length > 0 ? c[Columns.ISubject] : "(no subject)",
+                From = from.Length > 0 ? from : name, FromDisplay = fromName.Length > 0 ? fromName : "(no sender)", Sender = c[Columns.ISender],
+                To = c[Columns.ITo], Cc = c[Columns.ICc], Bcc = c[Columns.IBcc], InternetMessageId = c[Columns.IMessageId],
+                HasAttachments = c[Columns.IAttachments] == "Yes", AttachmentGlyph = c[Columns.IAttachments] == "Yes" ? "\uE723" : "",
+                Importance = c[Columns.IImportance], Type = c[Columns.IType], ItemId = c[Columns.IItemId],
+                FolderKey = Key(c[Columns.IMailbox], location, recoverable, c[Columns.IFolderPath])
             };
         }
 

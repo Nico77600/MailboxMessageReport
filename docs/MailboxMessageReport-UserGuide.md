@@ -1,7 +1,7 @@
 ---
 title: Mailbox Message Report
 subtitle: User guide
-version: 1.1.1
+version: 2.0.0
 author: Nicolas Fabert
 updated: 2026-10-07
 ---
@@ -157,7 +157,7 @@ Report | *Open the report* (every message), *Open the CSV*, *Open the folder*.
 | `-SkipRecipients` | Without To, Cc, Bcc: faster | `-SkipRecipients` |
 | `-Layout` | `Global` (default), `PerMailbox`, `Both` | `-Layout PerMailbox` |
 | `-Format` | `Csv`, `Html` or both (default) | `-Format Csv` |
-| `-HtmlMaxMessages` | Messages of the HTML report (default 20,000, up to 200,000) | `-HtmlMaxMessages 200000` |
+| `-HtmlMaxMessages` | The most messages of the HTML report (default 500,000, up to 2,000,000) | `-HtmlMaxMessages 2000000` |
 | `-Gui` | The window | `-Gui` |
 
 <!-- icon: file -->
@@ -165,8 +165,11 @@ Report | *Open the report* (every message), *Open the CSV*, *Open the folder*.
 
 Each run writes a new folder under `reports\` (`MailboxMessageReport_20261007-101500`). The console shows it at the end:
 
-- **`MailboxMessageReport.html`** — the report: self-contained, it can be sent alone. Tiles (messages in the primary mailbox, the archive, Recoverable Items), the search, and the *Messages*, *Folders* and *Mailboxes* tabs, searchable and sortable; a click on a message gives every column. It shows the first 20,000 messages (`Report.HtmlMaxMessages`); `-HtmlMaxMessages 200000` shows up to 200,000 (a report of about 120 MB that opens in about 3 s, search and sort under a second).
-- **`MailboxMessageReport-Messages.csv`** — every message: mailbox, location, Recoverable Items, folder path and name, received, sent, subject, from, sender, to, cc, bcc, Internet message ID, attachments, importance, read, type. Separator `;`, opens directly in Excel.
+- **`MailboxMessageReport.html`** — the report: self-contained, it can be sent alone. Tiles (messages in the primary mailbox, the archive, Recoverable Items), the search, and the *Messages*, *Folders* and *Mailboxes* tabs. **Every message** is in it, compressed (up to 500,000, `Report.HtmlMaxMessages`; 1,000,000 messages: about 32 MB, open in 4 s):
+  - filters together: every field, mailbox, location, folder, sender, subject, recipient (To, Cc, Bcc), message ID, received dates, a minimum of recipients, with attachments;
+  - a click on a column sorts it; a click on a message gives every detail and **every recipient** (To, Cc, Bcc, with *Copy*);
+  - *Export the view to CSV*: the messages filtered, in the order shown.
+- **`MailboxMessageReport-Messages.csv`** — every message: mailbox, location, Recoverable Items, folder path and name, received, sent, subject, from, sender, to, cc, bcc, **number of recipients**, Internet message ID, attachments, importance, read, type. Separator `;`, opens directly in Excel. A list of thousands of recipients is cut to fit an Excel cell, with the number of the others (`… (+8,739 more)`): the HTML report has them all.
 - **`MailboxMessageReport-Mailboxes.csv`**, **`-Folders.csv`** — one row per mailbox (archive, messages per location, why a mailbox was not read), one row per folder.
 - **`MailboxMessageReport-Summary.json`** — the whole result, for scripts.
 - **`Mailboxes\`** — with `-Layout PerMailbox` or `Both`: the CSV and HTML report of each mailbox.

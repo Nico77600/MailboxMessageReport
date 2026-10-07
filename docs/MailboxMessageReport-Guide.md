@@ -1,7 +1,7 @@
 ---
 title: Mailbox Message Report
 subtitle: Developer guide
-version: 1.1.1
+version: 2.0.0
 author: Nicolas Fabert
 updated: 2026-10-07
 ---
@@ -56,7 +56,7 @@ Microsoft Graph documents its mail API for the primary mailbox and the shared ma
 ```cards
 search | One list for every place | The primary mailbox, the archive and Recoverable Items in the same report, with a column that says where each message is.
 filter | Filtered at the source | The period and the subjects are a `$filter` of Graph: Exchange returns only the messages asked for.
-file | Reports made for volume | Every message in the CSV file (Excel); the first 20,000 in a self-contained HTML report, searchable; one report per mailbox if needed.
+file | Reports made for volume | Every message in the CSV file (Excel, cells within the size of an Excel cell) and in a self-contained HTML report, compressed, with filters (1,000,000 messages: 32 MB, opens in 4 s); one report per mailbox if needed.
 shield | Least rights | `Mail.ReadBasic.All` never gives the body or the attachments of a message; RBAC for Applications can limit it to some mailboxes.
 ```
 
@@ -246,7 +246,7 @@ Get-ChildItem 'C:\Tools\MailboxMessageReport' -Recurse -File -Force | Unblock-Fi
 | `Graph.MaxRetries` · `TimeoutSeconds` | `6` · `120` | Retries of a 429 or 5xx (after *Retry-After*); timeout of a request. |
 | `Report.OutputPath` · `FilePrefix` · `Formats` | `.\reports` · `MailboxMessageReport` · `Csv`, `Html` | Report files (a `Summary.json` is always written). |
 | `Report.Layout` | `Global` | `Global` (one report for every mailbox), `PerMailbox` (one per mailbox, in `Mailboxes\`, plus a summary with a link to each) or `Both`. |
-| `Report.HtmlMaxMessages` | `20000` | Messages shown in a HTML report (0 to 200,000; 200,000 = about 120 MB, opens in about 3 s); each CSV file holds them all. |
+| `Report.HtmlMaxMessages` | `500000` | The most messages of a HTML report, 0 to 2,000,000: every message below it (chapter 13 for the sizes). Each CSV file holds them all. |
 | `Report.CsvDelimiter` | `;` | `;`, `,` or a tab. |
 | `Report.TimeZone` | *Windows* | Time zone of the dates typed and shown (`Europe/Paris`...). |
 | `Window.PreviewMessages` | `5000` | Messages in the preview of the window, at most (0 to 50,000). |
@@ -273,7 +273,7 @@ A list of mailboxes (`-MailboxFile`, `Search.MailboxFile`, *Load a list...* in t
 | `-ExcludeFolder` | Folders left out (paths with wildcards). |
 | `-Layout` | `Global`, `PerMailbox`, `Both`. |
 | `-Format` | `Csv`, `Html` or both. |
-| `-HtmlMaxMessages` | Messages of a HTML report for this run (0 to 200,000; default `Report.HtmlMaxMessages`, 20,000). |
+| `-HtmlMaxMessages` | The most messages of a HTML report for this run (0 to 2,000,000; default `Report.HtmlMaxMessages`, 500,000). |
 | `-Gui` | The window. |
 | `-TenantId` · `-AppId` · `-CertificateThumbprint` · `-OutputPath` · `-ConfigPath` | Override the configuration for one run. |
 
@@ -327,7 +327,11 @@ The HTML report is one file, without any external resource: it can be sent alone
 
 - **Header**: the mailboxes, where and what was read, the status, the time zone, the duration; four tiles — messages, primary mailbox, archive, Recoverable Items (or the folders not read) — and a bar of the three locations.
 - **Search**: the mailboxes, the period and the subjects, where, the application and its permissions.
-- **Messages**: every message (the first `Report.HtmlMaxMessages`), 200 at a time (*Show more*), searchable (subject, addresses, folder, message ID), filtered by location and mailbox, sorted by any column; a click opens the message: every column, *Sender* when it was sent on behalf, the Internet message ID and the item ID.
+- **Messages**: every message (up to `Report.HtmlMaxMessages`, 500,000), in a table that draws only the rows on the screen: it scrolls through hundreds of thousands of messages at once.
+  - **Filters**, together: a search in every field (subject, addresses and names, folder, mailbox, message ID), the mailbox, the location (primary mailbox, archive, Recoverable Items of each), the folder (part of its path), the sender, the subject, a recipient (To, Cc or Bcc), the Internet message ID, the received dates, a minimum of recipients, with attachments only. The number of messages of the view is shown at all times.
+  - **Sort**: a click on a column (received, mailbox, location, folder, from, subject, to, recipients, attachments), again to reverse it; *Clear filters* comes back to the order of the report (mailbox, primary mailbox then archive, folder, newest first).
+  - **A message**: a click (or *Enter*) opens it — mailbox, location, folder, received (time zone of the report and UTC), sent, from, *Sender* when sent on behalf, Internet message ID, attachments, importance, read, type, and **every recipient**, To, Cc and Bcc in lists of their own with *Copy* (10,000 recipients as well).
+  - **Export the view to CSV**: the messages of the view, in the order shown, with the columns of the CSV file of the report (but the item ID).
 - **Folders**: every folder of every mailbox read: location, path, items, messages found, status (*Read*, *Empty*, *Excluded*, *Failed* with the reason; *read in N slices* for a large folder).
 - **Mailboxes**: status (*Read*, *Partial*, *Not read* and why), archive (*Yes* from Graph or from the list, *No*, *Unknown*), messages per location; with the *PerMailbox* layout, the link to the report and the CSV file of each mailbox.
 
@@ -345,7 +349,7 @@ Each run writes a new folder under `reports\`, `MailboxMessageReport_<yyyyMMdd-H
 | File | Content |
 |---|---|
 | `MailboxMessageReport.html` | The report (chapter 10). *PerMailbox* layout: the summary, the folders and the mailboxes with the link to each report. |
-| `MailboxMessageReport-Messages.csv` | *Global* and *Both*: every message of every mailbox, in the order of the report. UTF-8 with BOM, separator `;`: opens in Excel. |
+| `MailboxMessageReport-Messages.csv` | *Global* and *Both*: every message of every mailbox, in the order of the report. UTF-8 with BOM, separator `;`: opens in Excel. Columns: Mailbox, MailboxName, Location, RecoverableItems, FolderPath, Folder, Received, Sent, Subject, From, FromName, Sender, To, Cc, Bcc, **RecipientCount** (To + Cc + Bcc; empty with `-SkipRecipients`), InternetMessageId, HasAttachments, Importance, IsRead, Type, ReceivedUtc, ItemId. |
 | `MailboxMessageReport-Mailboxes.csv` | One row per mailbox: status, archive, folders, messages per location, notes. |
 | `MailboxMessageReport-Folders.csv` | One row per folder: mailbox, location, Recoverable Items, path, items, messages found, status. |
 | `MailboxMessageReport-Summary.json` | The whole result (request, application, mailboxes, folders, counts), for scripts. |
@@ -353,6 +357,8 @@ Each run writes a new folder under `reports\`, `MailboxMessageReport_<yyyyMMdd-H
 | `.parts\` | While reading only: the messages of each folder as they arrive; deleted once the report is written. |
 
 A cell starting with `=`, `+`, `-` or `@` is prefixed with an apostrophe in the CSV files: a subject cannot become an Excel formula.
+
+**A cell is never longer than an Excel cell** (32,767 characters). A longer cell breaks the rows of a CSV file opened in Excel: a message sent to 10,000 people (a list of 260,000 characters) became, in Excel, a row cut in the middle of its recipients and a second row of 8,750 columns of addresses (measured with Excel; versions 1.x). Since 2.0.0 a list (To, Cc, Bcc) is cut after its last whole address before 32,000 characters, with the number of the others: `person00001@contoso.com; ...; person01261@contoso.com; … (+8,739 more)`; *RecipientCount* gives them all, and the HTML report lists every one (the detail of the message, *Copy*). The row stays one row of 23 columns.
 
 # Part IV · Maintain
 
@@ -369,11 +375,13 @@ A cell starting with `=`, `+`, `-` or `@` is prefixed with an apostrophe in the 
 | `src\MailboxMessageReport.Search.ps1` | Folders (delta, Recoverable Items, paths), the filter, the slices of a large folder, the messages to part files, the counts. |
 | `src\MailboxMessageReport.Report.ps1` · `templates\Report.template.html` | CSV, JSON and HTML, global or per mailbox. |
 | `src\MailboxMessageReport.Gui.ps1` | WPF window with the Fluent theme; the run in a background runspace. |
-| `src\MailboxMessageReport.Native.cs` | Compiled helper (C#, built by `Add-Type` when the module loads): the body of a Graph answer as bytes, a page of messages to rows, the part files, the CSV and HTML writers, the rows of the window. |
+| `src\MailboxMessageReport.Native.cs` | Compiled helper (C#, built by `Add-Type` when the module loads): the body of a Graph answer as bytes, a page of messages to rows, the part files, the CSV writer (cells within an Excel cell), the HTML report (`HtmlReport`), the rows of the window. |
 
 **Graph requests.** Small requests (users, archive IDs) go through `$batch` calls of 20 (`Invoke-MmrGraphBatch`, beta for `settings/exchange`). Lists (folders, messages) are read by `Invoke-MmrGraphPaged`: each page a request of its own (a page of messages is large), 16 in flight, 4 at a time per mailbox; the lists of each mailbox wait in a queue of their own and the mailboxes are served in turn, so that thousands of folders are scheduled at the same cost as a few; the next page of a list goes first (a folder is finished before the next one starts).
 
-**Pages to disk.** The body of a page is read as bytes (`Body`) and given to the compiled `PartWriter` of its folder, which parses it (`System.Text.Json`) and appends one JSON array per message to the part file: the memory does not grow with the messages. A page never goes through a PowerShell string: a .NET method called from PowerShell with a string of 1 MB costs about 100 ms (the argument is scanned), measured while building the tool. The report merges the part files in order (`Merge.AppendPart`) into the CSV files and the row buffers of the HTML reports and the window; the HTML report is written by `Merge.WriteHtml` from its template.
+**Pages to disk.** The body of a page is read as bytes (`Body`) and given to the compiled `PartWriter` of its folder, which parses it (`System.Text.Json`) and appends one JSON array per message to the part file: the memory does not grow with the messages. A page never goes through a PowerShell string: a .NET method called from PowerShell with a string of 1 MB costs about 100 ms (the argument is scanned), measured while building the tool. The report merges the part files in order (`Merge.AppendPart`) into the CSV files, the HTML reports and the preview of the window.
+
+**The HTML report** (the design of the HTML report of Purview DLP Report). `HtmlReport` writes its template up to the marker of the messages, then each message as it comes, then the rest of the template (the summary, the mailboxes and the folders, known at the end). The messages are written in **blocks of 20,000**, in columns: the folder, the received date (seconds of the local time) and its offset to UTC, the sent date (seconds before the received one), the subject, the sender, To, Cc and Bcc (their numbers, then their addresses), the message ID, flags (attachments, read, importance, recipients not read) and the type. The texts that repeat — folders, subjects, addresses, names, types — are stored once, in dictionaries that each block extends, and referenced by number. Each block is JSON compressed with gzip and written in base64 in a `<script type="application/x-mmr-block">`. The page decompresses the blocks one after the other (`DecompressionStream`, a progress bar) into typed arrays; a filter looks for its text once per dictionary entry, then reads the rows as numbers; a sort ranks the texts of a dictionary once, then sorts numbers; the table draws only the rows on the screen. The markers are found in the template before anything is replaced: a subject that holds the text of a marker is never touched.
 
 **Window.** The window thread only draws: a run is handed to a second runspace (`Start-MmrGuiWork`), which sends its lines through a queue read every 100 ms (`Step-MmrGuiWork`); the result and the preview come back at the end. *Stop* goes through a shared synchronized table. The preview is kept by the report (`Export-MmrReport -PreviewPerFolder`: a row buffer per folder, the first N rows of each); the tree of the folder view is built by the compiled `FolderNode.Build` from the mailboxes, the folders and the preview rows. The content of a message is a second kind of work of the same runspace (`Invoke-MmrGuiWork -Kind Body`), started 300 ms after a message is selected (moving through the list does not read each message) and kept with its row.
 
@@ -391,12 +399,17 @@ A cell starting with `=`, `+`, `-` or `@` is prefixed with an apostrophe in the 
 
 The time of a run is the time of Exchange Online: about 2 to 10 ms per message without recipients, up to 30 ms with them in a folder of meeting messages, 4 lists at a time per mailbox and 16 in all. Many mailboxes are read side by side; a large folder is cut into slices of its dates so that it is read 4 slices at a time instead of page after page.
 
-On the computer, once Graph has answered (`tools\Measure-MailboxMessageReport.ps1`, 200,000 synthetic messages in pages of 1,000): pages to part files 4 s (about 45,000 messages a second), report — CSV of 108 MB and HTML — 2.2 s, with the first 20,000 messages in the HTML (12 MB) or all 200,000 (118 MB); the working set of the process stays under 500 MB.
+On the computer, once Graph has answered (`tools\Measure-MailboxMessageReport.ps1`: synthetic messages in pages of 1,000, every message ID unique, subjects, senders and recipients of 300 people; Microsoft Edge for the page, measured 2026-10-07):
 
-**200,000 messages in one HTML report** (`-HtmlMaxMessages 200000`, Microsoft Edge, measured): the report of 118 MB opens in 2.7 to 4 s, about 190 MB of memory in the page; the table shows 200 rows at a time; a filter by location 0.04 s, a sort by date 0.2 s, by subject 0.8 s, a search 0.2 to 0.6 s after a pause in the typing. Beyond 200,000, use the CSV file (Excel opens 1,048,576 rows), or one report per mailbox (`-Layout PerMailbox`). To measure another volume:
+| Messages | Pages to part files | Report (CSV and HTML) | CSV | HTML | The page opens | Search | Sort by subject | Memory of the page |
+|---|---|---|---|---|---|---|---|---|
+| 200,000 | 4.3 s | 5.9 s | 103 MB | **6.5 MB** | **1.1 s** | 0.1 s | 0.3 s | 55 MB |
+| 1,000,000 | 17.3 s | 26.5 s | 514 MB | **32 MB** | **4.1 s** | 0.3 s | 0.5 s | 305 MB |
+
+The process stays under 330 MB whatever the volume (the messages are on disk). Real messages have longer message IDs and more different subjects: count two to three times these sizes. Lab tenant: 5,275 messages of two mailboxes and their archives, with their recipients: a HTML report of 307 KB. Version 1.x wrote the first 20,000 messages in plain JSON (200,000: 118 MB, 3 s to open, 200 rows at a time). Beyond `Report.HtmlMaxMessages` (500,000, up to 2,000,000), the page holds the first ones and says so: use one report per mailbox (`-Layout PerMailbox`) or the CSV file (Excel opens 1,048,576 rows). To measure another volume:
 
 ```powershell
-pwsh -File .\tools\Measure-MailboxMessageReport.ps1 -Messages 500000 -Simulated
+pwsh -File .\tools\Measure-MailboxMessageReport.ps1 -Messages 1000000 -HtmlMaxMessages 2000000
 ```
 
 - **Exchange Online only**: a mailbox on-premises (hybrid) cannot be opened by Graph (*MailboxNotEnabledForRESTAPI*); it is reported, not read. An inactive mailbox is not reachable either.
@@ -405,7 +418,8 @@ pwsh -File .\tools\Measure-MailboxMessageReport.ps1 -Messages 500000 -Simulated
 - **Mail folders only**: the calendar, the contacts, the tasks and the hidden folders are not listed.
 - **Bcc** is known to the sender of a message only.
 - **A filter on the subject** starts with `receivedDateTime ge 1900-01-01`: an item without a received date (none was seen) would be left out.
-- **HTML**: the first `Report.HtmlMaxMessages` messages (20,000, up to 200,000); the CSV file holds them all.
+- **HTML**: up to `Report.HtmlMaxMessages` messages (500,000, up to 2,000,000); the CSV file holds them all. The page needs a browser with `DecompressionStream` (Microsoft Edge, Google Chrome, Firefox since 2023): not Internet Explorer, not the preview of OneDrive or SharePoint.
+- **Excel**: a cell holds 32,767 characters, a sheet 1,048,576 rows: a list of recipients is cut (chapter 11), a CSV file of more messages opens in part.
 - **Graph throttling**: 10,000 requests per 10 minutes per mailbox and application; a page of 250 messages takes more than a second, the tool stays far below it. A 429 is retried after its delay.
 
 <!-- icon: beaker -->
@@ -415,7 +429,7 @@ pwsh -File .\tools\Measure-MailboxMessageReport.ps1 -Messages 500000 -Simulated
 .\Run-Tests.ps1      # Pester 6.1+, simulated tenant, no network
 ```
 
-`tests\MailboxMessageReport.FakeGraph.ps1` replaces the transport with a simulated Exchange Online that behaves like the lab: `settings/exchange` in beta (the archive ID, *MailboxNotEnabledForRESTAPI* for a mailbox on-premises), a mailbox opened by its user ID, any alias or its `MBX:` ID, the folder tree of `mailFolders/delta` in pages (`Prefer: odata.maxpagesize`), Recoverable Items, the messages filtered by date and subject with `contains()` refused before the date (*InefficientFilter*), `$select`, `$orderby` ascending or descending, `$top` / `$skip` and their nextLink, pages cut short (a message Exchange cannot return, with or without its recipients; pages too large; once), `$batch` in v1.0 and beta, one message by its ID with its body as text (`Prefer: outlook.body-content-type="text"`), 429 and failures on demand; every request is recorded with the most requests in flight per mailbox. The tests cover the configuration, the lists of mailboxes (text, CSV, `ArchiveGuid`), the request and the filter, the connection and the permissions, the mailboxes (alias, archive from Graph or from the list, on-premises, not a mailbox, twice under two aliases), the folders (paths, Recoverable Items, empty, left out), the messages (period, subjects, columns, time zone, order, pages, 4 per mailbox, slices of a large folder, without recipients, 429 retried, a folder that fails, pages cut short asked again smaller and a message Graph cannot return left out), *Stop*, the report (global, per mailbox, both, CSV safe for Excel, HTML safe, the first messages of the HTML, `Summary.json`, the part files deleted), the window (configuration, a search with its preview, the first messages of each folder, the folder tree, the folder view and the content of a message in the reading pane, values to fix), the time left and the command line.
+`tests\MailboxMessageReport.FakeGraph.ps1` replaces the transport with a simulated Exchange Online that behaves like the lab: `settings/exchange` in beta (the archive ID, *MailboxNotEnabledForRESTAPI* for a mailbox on-premises), a mailbox opened by its user ID, any alias or its `MBX:` ID, the folder tree of `mailFolders/delta` in pages (`Prefer: odata.maxpagesize`), Recoverable Items, the messages filtered by date and subject with `contains()` refused before the date (*InefficientFilter*), `$select`, `$orderby` ascending or descending, `$top` / `$skip` and their nextLink, pages cut short (a message Exchange cannot return, with or without its recipients; pages too large; once), `$batch` in v1.0 and beta, one message by its ID with its body as text (`Prefer: outlook.body-content-type="text"`), 429 and failures on demand; every request is recorded with the most requests in flight per mailbox. The tests cover the configuration, the lists of mailboxes (text, CSV, `ArchiveGuid`), the request and the filter, the connection and the permissions, the mailboxes (alias, archive from Graph or from the list, on-premises, not a mailbox, twice under two aliases), the folders (paths, Recoverable Items, empty, left out), the messages (period, subjects, columns, time zone, order, pages, 4 per mailbox, slices of a large folder, without recipients, 429 retried, a folder that fails, pages cut short asked again smaller and a message Graph cannot return left out), *Stop*, the report (global, per mailbox, both, CSV safe for Excel, HTML safe, every message in the compressed blocks of the HTML report decoded as the page does, the most messages of a page, a message of 10,000 recipients: its cell cut for Excel, *RecipientCount*, every recipient in the HTML report, `Summary.json`, the part files deleted), the window (configuration, a search with its preview, the first messages of each folder, the folder tree, the folder view and the content of a message in the reading pane, values to fix), the time left and the command line.
 
 <!-- icon: book -->
 ## 15. Documentation and package
@@ -455,7 +469,9 @@ A link from one guide to the other is written with its GitHub anchor (`MailboxMe
 | A folder of the archive *Failed* with *auxiliary archive* | Auto-expanding archive: out of scope (chapter 3). |
 | *InefficientFilter* in the log | Should not happen (the filter always starts with the date): send the log line. |
 | *Graph answered a page cut short* in the log | Exchange Online ended a page early: the tool asks it again with fewer messages (chapter 4). Many of them on a folder of meeting messages: `-SkipRecipients`, or `Graph.PageSize = 100`. *N message(s) left out* in the summary: Graph could not return these messages even one at a time; the log gives their position in the folder. With 1.0.0 the run stopped with *Exception calling "AddPage"... Expected depth to be zero at the end of the JSON payload*: use 1.1.1 or later. |
-| The HTML report shows no message | With `-Layout PerMailbox` the messages are in the report of each mailbox (*Mailboxes* tab, `Mailboxes\`). Otherwise the browser does not run the script of the report (a notice says so since 1.1.1): open it in Microsoft Edge or Google Chrome, not in Internet Explorer mode or the preview of OneDrive / SharePoint; the CSV files hold every message. |
+| The HTML report shows no message | With `-Layout PerMailbox` the messages are in the report of each mailbox (*Mailboxes* tab, `Mailboxes\`). Otherwise the browser does not run the script of the report (a notice says so since 1.1.1), or cannot decompress its messages (*This browser cannot open the messages of the report*): open it in Microsoft Edge or Google Chrome, not in Internet Explorer mode or the preview of OneDrive / SharePoint; the CSV files hold every message. |
+| Excel shows a row cut in two, a row of thousands of columns of addresses | A CSV file of version 1.x with a message of thousands of recipients (a cell longer than 32,767 characters): version 2.0.0 cuts the list in the cell (chapter 11). |
+| *N of M messages are in this page* | More messages than `Report.HtmlMaxMessages`: `-HtmlMaxMessages 2000000`, or one report per mailbox (`-Layout PerMailbox`). |
 | A run takes long on one folder | A large folder of meeting messages with recipients: `-SkipRecipients`, or leave the folder out (`-ExcludeFolder '\Deleted Items'`). The progress line gives the time left. |
 | *Mailbox Message Report 1.0.0 is already loaded in this PowerShell session* | The compiled part of another version is loaded in this process (it cannot be unloaded): open a new PowerShell window. |
 | *Cannot add type* · *... is not allowed in this language mode* when the module loads | PowerShell runs in *Constrained Language* mode (AppLocker or App Control policy): the tool needs *Full Language* (a folder allowed by the policy, or signed scripts). |
@@ -468,7 +484,7 @@ A link from one guide to the other is written with its GitHub anchor (`MailboxMe
 - The tool only reads; it never changes a mailbox, not even the read state of a message. With `Mail.ReadBasic.All` it cannot read the body, the attachments or the headers of a message. With `Mail.Read`, the reading pane of the window reads the content of the message selected, one at a time, each read written to the log; the reports never hold it, the attachments are never read. `Window.ReadBody = $false` turns it off.
 - The reports contain addresses, subjects and folder names: store and send them as personal data. The part files of a run are deleted once the report is written (and when a run fails or is stopped).
 - **Least rights**: `Mail.ReadBasic.All` rather than `Mail.Read` (only the reading pane of the window needs it); `User.Read.All` can be left out with the `ArchiveGuid` of a list; RBAC for Applications limits the mailboxes (chapter 5).
-- CSV cells starting with `=`, `+`, `-`, `@` are neutralised; the HTML report escapes every value and holds its data in JSON blocks (no script from a subject runs).
+- CSV cells starting with `=`, `+`, `-`, `@` are neutralised; the HTML report holds its messages in compressed blocks (base64) and its other data in JSON blocks, and shows every value as text (no script from a subject runs).
 
 <!-- icon: beaker -->
 ## Appendix C - Lab measurements
@@ -496,6 +512,8 @@ A lab tenant, Microsoft Graph v1.0 and beta, application token, 2026-10-07. Test
 | Tool on it, with the recipients (8 slices, pages of 1,000) | 39,434 messages, each once, To filled for 39,425 (the others had none), 7 min 27 s |
 | `$filter=receivedDateTime lt ...` alone, or `ge ...` alone, `$orderby=receivedDateTime desc` (the open slices, 1.1.1) | 200, sorted; the same 39,434 messages, each once, with the open slices (`-SkipRecipients`, 36.9 s) |
 | nextLink of a page of messages | `%24top=N&%24skip=M`; `$skip` honoured with `$filter` and `$orderby` (items 3 to 5 for `$top=3&$skip=2`) |
+| A CSV row with a list of 10,000 recipients (260,000 characters) opened in Excel (2.0.0, through COM) | as 1.x wrote it: 4 rows × 8,750 columns (the row cut, the rest of the addresses in a row of its own); as 2.0.0 writes it: 3 rows × 23 columns, *RecipientCount* 10,001 |
+| HTML report of 5,275 messages of the lab (two mailboxes, their archives, Recoverable Items, recipients) | 307 KB; filters, sort, detail and export checked in Microsoft Edge |
 | Window, 3 mailboxes, subjects *Contrat Alpha* or *Facture*, Recoverable Items (`Mail.Read`) | 963 messages; folder view: 150 messages in the preview (the first 10 of each folder), the first folder with messages selected, the content of its first message read as text in the reading pane |
 
 <!-- icon: tag -->

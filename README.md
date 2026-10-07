@@ -73,7 +73,7 @@ Every measurement is in the [developer guide, chapter 3 and appendix C](docs/Mai
 
 <table>
   <tr>
-    <td width="50%" valign="top"><a href="docs/images/report-overview.png"><img alt="HTML report" src="docs/images/report-overview.png"></a><br><sub><b>HTML report</b> &middot; messages per location, every message searchable and sortable, the folders and the mailboxes</sub></td>
+    <td width="50%" valign="top"><a href="docs/images/report-overview.png"><img alt="HTML report" src="docs/images/report-overview.png"></a><br><sub><b>HTML report</b> &middot; every message, compressed, in a table with filters and sort; the folders and the mailboxes</sub></td>
     <td width="50%" valign="top"><a href="docs/images/gui-search-light.png"><img alt="The window after a search" src="docs/images/gui-search-light.png"></a><br><sub><b>Window</b> &middot; the search on the left; the folders of the mailboxes and of their archive like Outlook, the first messages of each folder and a reading pane</sub></td>
   </tr>
   <tr>
@@ -94,7 +94,7 @@ Every measurement is in the [developer guide, chapter 3 and appendix C](docs/Mai
 <a href="docs/images/gui-list-light.png"><img alt="The preview of the window as a list" src="docs/images/gui-list-light.png"></a>
 </details>
 
-Each run writes `MailboxMessageReport-Messages.csv` (every message), `-Mailboxes.csv`, `-Folders.csv`, `-Summary.json` and a self-contained HTML report (the first 20,000 messages), in a folder of its own; with `-Layout PerMailbox` or `Both`, the CSV and HTML report of each mailbox in `Mailboxes\`.
+Each run writes `MailboxMessageReport-Messages.csv` (every message; a list of thousands of recipients cut to fit an Excel cell, with their number), `-Mailboxes.csv`, `-Folders.csv`, `-Summary.json` and a self-contained HTML report with **every message**, compressed, in a table with filters (1,000,000 messages: 32 MB, open in 4 s), in a folder of its own; with `-Layout PerMailbox` or `Both`, the CSV and HTML report of each mailbox in `Mailboxes\`.
 
 ## Requirements
 
@@ -112,7 +112,7 @@ Each run writes `MailboxMessageReport-Messages.csv` (every message), `-Mailboxes
 Download `MailboxMessageReport-<version>.zip` from the [latest release](https://github.com/Nico77600/MailboxMessageReport/releases/latest), extract it (for example in `C:\Tools`) and unblock the files (command at the top of this page).
 
 ```powershell
-cd C:\Tools\MailboxMessageReport-1.1.1
+cd C:\Tools\MailboxMessageReport-2.0.0
 notepad .\config\MailboxMessageReport.config.psd1          # tenant, application, certificate thumbprint
 
 .\Invoke-MailboxMessageReport.ps1 -Gui                     # the window

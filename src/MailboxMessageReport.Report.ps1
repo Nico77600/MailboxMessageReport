@@ -15,13 +15,15 @@
       Mailboxes\<prefix>-<address>.csv / .html   PerMailbox layout: the messages of one mailbox
     The messages come from the part files written while reading (one per folder, one JSON array per message and per
     line): they are merged in order into the CSV files and the HTML reports (compiled: MailboxMessageReportNative.Merge),
-    then deleted. A HTML report holds the first Report.HtmlMaxMessages messages (the CSV file holds them all).
+    then deleted. A HTML report holds every message, up to Report.HtmlMaxMessages (500,000 by default), in compressed
+    blocks of columns (MailboxMessageReportNative.HtmlReport): the page shows them in a virtual table, with filters.
     CSV files: UTF-8 with BOM, configurable delimiter, text cells starting with = + - @ are prefixed with an apostrophe
-    (no formula injection when opened in Excel). No token or secret is ever part of the result.
+    (no formula injection when opened in Excel), a cell is never longer than an Excel cell (a list of 10,000 recipients
+    is cut with the number of the others; RecipientCount gives them all). No token or secret is ever part of the result.
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.1
+    Version : 2.0.0
 #>
 
 $script:ReportColumns = [ordered]@{
@@ -80,24 +82,29 @@ function Get-MmrStatusText {
     switch ($Status) { 'Completed' { 'Completed' } 'Warning' { 'Finished with warnings' } 'Failed' { 'Failed' } default { $Status } }
 }
 
-function Write-MmrHtml {
+# Messages per compressed block of a HTML report (the page decompresses them one after the other, with a progress bar).
+$script:HtmlBlockRows = 20000
+
+function Open-MmrHtmlReport {
     <#
-        One HTML report from the template: the summary, the mailboxes, the folders, and the messages kept in a row buffer
-        (written by the compiled helper: the JSON of thousands of messages never goes through a PowerShell string).
+        A HTML report opened for writing: the template up to the messages (its title), the messages added while the part
+        files are merged (compiled: HtmlReport.Add), closed by Close-MmrHtmlReport.
     #>
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Title, [int]$Max)
+    [MailboxMessageReportNative.HtmlReport]::new((Join-Path $script:ToolRoot 'templates\Report.template.html'), $Path, $Max, $script:HtmlBlockRows, [string[]]@('{{TITLE}}'), [string[]]@([Net.WebUtility]::HtmlEncode($Title)))
+}
+
+function Close-MmrHtmlReport {
+    <# The end of a HTML report: the last block of messages, then the summary, the mailboxes and the folders. #>
     param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$Title,
+        [Parameter(Mandatory = $true)][MailboxMessageReportNative.HtmlReport]$Report,
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Summary,
         [AllowEmptyCollection()][object[]]$Mailboxes,
-        [AllowEmptyCollection()][object[]]$Folders,
-        [MailboxMessageReportNative.RowBuffer]$Messages
+        [AllowEmptyCollection()][object[]]$Folders
     )
     $mbx = @($Mailboxes | Select-Object -Property ($script:ReportColumns.Mailboxes + 'Html', 'Csv'))
     $fld = @($Folders | Select-Object -Property $script:ReportColumns.Folders)
-    $markers = [string[]]@('{{TITLE}}', '{{SUMMARY_JSON}}', '{{MAILBOXES_JSON}}', '{{FOLDERS_JSON}}')
-    $values = [string[]]@([Net.WebUtility]::HtmlEncode($Title), (ConvertTo-MmrEmbeddedJson $Summary), (ConvertTo-MmrEmbeddedJson $mbx), (ConvertTo-MmrEmbeddedJson $fld))
-    [MailboxMessageReportNative.Merge]::WriteHtml((Join-Path $script:ToolRoot 'templates\Report.template.html'), $Path, $markers, $values, $Messages, '{{MESSAGES_JSON}}')
+    $Report.Close([string[]]@('{{SUMMARY_JSON}}', '{{MAILBOXES_JSON}}', '{{FOLDERS_JSON}}'), [string[]]@((ConvertTo-MmrEmbeddedJson $Summary), (ConvertTo-MmrEmbeddedJson $mbx), (ConvertTo-MmrEmbeddedJson $fld)))
 }
 
 function Get-MmrHtmlSummary {
@@ -129,6 +136,8 @@ function Export-MmrReport {
         the folders and Summary.json. The part files are deleted.
     .PARAMETER Layout
         Global (one file for every mailbox), PerMailbox (one file per mailbox, under Mailboxes\) or Both.
+    .PARAMETER HtmlMaxMessages
+        The most messages of a HTML report (every message below it); the CSV files hold them all.
     .PARAMETER PreviewMessages
         How many messages to keep for the window at most.
     .PARAMETER PreviewPerFolder
@@ -145,7 +154,7 @@ function Export-MmrReport {
         [ValidateSet('Csv', 'Html')][string[]]$Formats = @('Csv', 'Html'),
         [ValidateSet('Global', 'PerMailbox', 'Both')][string]$Layout = 'Global',
         [ValidateSet(';', ',', "`t")][string]$Delimiter = ';',
-        [int]$HtmlMaxMessages = 20000,
+        [int]$HtmlMaxMessages = 500000,
         [int]$PreviewMessages = 0,
         [int]$PreviewPerFolder = 0,
         [string]$PartsPath
@@ -166,10 +175,14 @@ function Export-MmrReport {
 
     # ---- the messages: part files merged in the order of the report ---------------------------------------------
     $globalCsv = $null
-    $globalBuffer = if ($global -and $html) { [MailboxMessageReportNative.RowBuffer]::new($HtmlMaxMessages) } else { $null }
+    $globalHtml = $null
+    $htmlPath = Join-Path $Directory "$Prefix.html"
+    $names = @($Result.Mailboxes | ForEach-Object { if ($_.DisplayName) { $_.DisplayName } else { $_.Address } })
+    $globalTitle = "Mailbox Message Report | $(if ($names.Count -le 3) { $names -join ', ' } else { "$($names.Count) mailboxes" })"
     $preview = [MailboxMessageReportNative.RowBuffer]::new([Math]::Max(0, $PreviewMessages))
     try {
         if ($global -and $csv) { $files.Messages = Join-Path $Directory "$Prefix-Messages.csv"; $globalCsv = [MailboxMessageReportNative.CsvTarget]::new($files.Messages, [MailboxMessageReportNative.Columns]::Messages, $Delimiter) }
+        if ($global -and $html) { $globalHtml = Open-MmrHtmlReport -Path $htmlPath -Title $globalTitle -Max $HtmlMaxMessages }
         $sub = Join-Path $Directory 'Mailboxes'
         if ($perMailbox) { [void][IO.Directory]::CreateDirectory($sub) }
         $done = 0
@@ -179,32 +192,40 @@ function Export-MmrReport {
             # A mailbox not read has no report of its own: the summary says why.
             $own = $perMailbox -and $m.State -eq 'Ok'
             $mailboxCsv = $null
-            $mailboxBuffer = if ($own -and $html) { [MailboxMessageReportNative.RowBuffer]::new($HtmlMaxMessages) } else { $null }
+            $mailboxHtml = $null
             $name = Get-MmrSafeFileName $m.Address
+            $folders = if ($byMailbox.ContainsKey($m.Address)) { $byMailbox[$m.Address] } else { @() }
             try {
                 if ($own -and $csv) { $m.Csv = "Mailboxes/$Prefix-$name.csv"; $mailboxCsv = [MailboxMessageReportNative.CsvTarget]::new((Join-Path $sub "$Prefix-$name.csv"), [MailboxMessageReportNative.Columns]::Messages, $Delimiter) }
+                if ($own -and $html) { $mailboxHtml = Open-MmrHtmlReport -Path (Join-Path $sub "$Prefix-$name.html") -Title "Mailbox Message Report | $(if ($m.DisplayName) { $m.DisplayName } else { $m.Address })" -Max $HtmlMaxMessages }
                 $targets = [MailboxMessageReportNative.CsvTarget[]]@(@($globalCsv, $mailboxCsv) | Where-Object { $_ })
-                $buffers = [MailboxMessageReportNative.RowBuffer[]]@(@($globalBuffer, $mailboxBuffer, $(if ($PreviewPerFolder -le 0) { $preview })) | Where-Object { $_ })
-                $folders = if ($byMailbox.ContainsKey($m.Address)) { $byMailbox[$m.Address] } else { @() }
+                $reports = [MailboxMessageReportNative.HtmlReport[]]@(@($globalHtml, $mailboxHtml) | Where-Object { $_ })
+                $buffers = [MailboxMessageReportNative.RowBuffer[]]@(@($(if ($PreviewPerFolder -le 0) { $preview })) | Where-Object { $_ })
                 foreach ($f in $folders) {
                     if ($f.Messages -le 0) { continue }
                     # The window: the first messages of each folder (its sample joins the preview while there is room).
                     $sample = if ($PreviewPerFolder -gt 0 -and $preview.Lines.Count -lt $preview.Max) { [MailboxMessageReportNative.RowBuffer]::new($PreviewPerFolder) } else { $null }
                     $withSample = if ($sample) { [MailboxMessageReportNative.RowBuffer[]]@(@($buffers) + $sample) } else { $buffers }
-                    foreach ($part in @($f.Parts)) { [void][MailboxMessageReportNative.Merge]::AppendPart($part, $targets, $withSample) }
+                    foreach ($part in @($f.Parts)) { [void][MailboxMessageReportNative.Merge]::AppendPart($part, $targets, $withSample, $reports) }
                     if ($sample) { $preview.AddFrom($sample) }
                 }
+                if ($mailboxHtml) {
+                    $m.Html = "Mailboxes/$Prefix-$name.html"
+                    $counts = Get-MmrCounts -Mailboxes @($m) -Folders @($folders)
+                    $summary = Get-MmrHtmlSummary -Result $Result -Mailbox $m -Counts $counts -Shown $mailboxHtml.Rows -Total $mailboxHtml.Seen -Layout $Layout -MessagesHere $true
+                    Close-MmrHtmlReport -Report $mailboxHtml -Summary $summary -Mailboxes @($m) -Folders @($folders)
+                    if (-not $csv) { $mailboxFiles++ }
+                }
             }
-            finally { if ($mailboxCsv) { $mailboxCsv.Dispose(); $mailboxFiles++ } }
-            if ($mailboxBuffer) {
-                $m.Html = "Mailboxes/$Prefix-$name.html"
-                $counts = Get-MmrCounts -Mailboxes @($m) -Folders @($folders)
-                $summary = Get-MmrHtmlSummary -Result $Result -Mailbox $m -Counts $counts -Shown $mailboxBuffer.Lines.Count -Total $mailboxBuffer.Seen -Layout $Layout -MessagesHere $true
-                $title = "Mailbox Message Report | $(if ($m.DisplayName) { $m.DisplayName } else { $m.Address })"
-                Write-MmrHtml -Path (Join-Path $sub "$Prefix-$name.html") -Title $title -Summary $summary -Mailboxes @($m) -Folders @($folders) -Messages $mailboxBuffer
-                if (-not $csv) { $mailboxFiles++ }
+            finally {
+                if ($mailboxCsv) { $mailboxCsv.Dispose(); $mailboxFiles++ }
+                if ($mailboxHtml) { $mailboxHtml.Dispose() }
             }
         }
+    }
+    catch {
+        if ($globalHtml) { $globalHtml.Dispose() }
+        throw
     }
     finally { if ($globalCsv) { $globalCsv.Dispose() } }
 
@@ -216,13 +237,14 @@ function Export-MmrReport {
         Write-MmrTableCsv -Rows @($Result.Folders) -Columns $script:ReportColumns.Folders -Path $files.Folders -Delimiter $Delimiter
     }
     if ($html) {
-        $files.Html = Join-Path $Directory "$Prefix.html"
-        $shown = if ($globalBuffer) { $globalBuffer.Lines.Count } else { 0 }
-        $total = if ($globalBuffer) { $globalBuffer.Seen } else { [long]$Result.Counts.Messages }
-        $summary = Get-MmrHtmlSummary -Result $Result -Counts $Result.Counts -Shown $shown -Total $total -Layout $Layout -MessagesHere ($null -ne $globalBuffer)
-        $names = @($Result.Mailboxes | ForEach-Object { if ($_.DisplayName) { $_.DisplayName } else { $_.Address } })
-        $title = "Mailbox Message Report | $(if ($names.Count -le 3) { $names -join ', ' } else { "$($names.Count) mailboxes" })"
-        Write-MmrHtml -Path $files.Html -Title $title -Summary $summary -Mailboxes @($Result.Mailboxes) -Folders @($Result.Folders) -Messages $globalBuffer
+        # PerMailbox: the summary of the run, without its messages (they are in the report of each mailbox).
+        if (-not $globalHtml) { $globalHtml = Open-MmrHtmlReport -Path $htmlPath -Title $globalTitle -Max 0 }
+        $files.Html = $htmlPath
+        $shown = if ($global) { $globalHtml.Rows } else { 0 }
+        $total = if ($global) { $globalHtml.Seen } else { [long]$Result.Counts.Messages }
+        $summary = Get-MmrHtmlSummary -Result $Result -Counts $Result.Counts -Shown $shown -Total $total -Layout $Layout -MessagesHere $global
+        try { Close-MmrHtmlReport -Report $globalHtml -Summary $summary -Mailboxes @($Result.Mailboxes) -Folders @($Result.Folders) }
+        finally { $globalHtml.Dispose() }
     }
     $files.Summary = Join-Path $Directory "$Prefix-Summary.json"
     $Result.RunFolder = $Directory

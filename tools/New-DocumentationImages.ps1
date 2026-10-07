@@ -13,7 +13,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.1
+    Version : 2.0.0
 #>
 #Requires -Version 7.4
 [CmdletBinding()]
@@ -184,7 +184,7 @@ foreach ($shot in @(
     $png = Join-Path $Destination $shot.File
     $before = if (Test-Path -LiteralPath $png) { (Get-Item -LiteralPath $png).LastWriteTimeUtc } else { [datetime]::MinValue }
     # Edge headless sometimes stays open after writing its screenshot: waited for 60 s at most, then stopped.
-    $p = Start-Process -FilePath $edge -PassThru -WindowStyle Hidden -ArgumentList @('--headless=new', '--disable-gpu', '--hide-scrollbars', "--user-data-dir=`"$profile`"", "--window-size=$size", '--virtual-time-budget=3000', "--screenshot=`"$png`"", "`"$url`"")
+    $p = Start-Process -FilePath $edge -PassThru -WindowStyle Hidden -ArgumentList @('--headless=new', '--disable-gpu', '--hide-scrollbars', '--lang=en-US', "--user-data-dir=`"$profile`"", "--window-size=$size", '--virtual-time-budget=3000', "--screenshot=`"$png`"", "`"$url`"")
     if (-not $p.WaitForExit(60000)) {
         if (-not (Test-Path -LiteralPath $png) -or (Get-Item -LiteralPath $png).LastWriteTimeUtc -le $before) { Write-Warning "Edge did not write $($shot.File) within 60 s." }
         Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue

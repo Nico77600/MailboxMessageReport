@@ -24,7 +24,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.1
+    Version : 2.0.0
 #>
 
 $script:Gui = $null
@@ -691,7 +691,7 @@ function Update-MmrGuiState {
     $c.ReportHint.Text = if (-not $formats) { 'Tick CSV, HTML or both.' }
     elseif ($c.LayoutPerMailbox.IsChecked) { 'A folder Mailboxes\ with the CSV and HTML files of each mailbox, and a summary with a link to each one.' }
     elseif ($c.LayoutBoth.IsChecked) { 'One report for every mailbox, and the files of each mailbox in Mailboxes\.' }
-    else { "One file for every mailbox. A HTML report shows the first $('{0:N0}' -f [int]$g.Configuration.HtmlMaxMessages) messages; the CSV file holds them all." }
+    else { "One file for every mailbox. The HTML report holds every message (up to $('{0:N0}' -f [int]$g.Configuration.HtmlMaxMessages)), with filters; the CSV file as well." }
 }
 
 function Update-MmrGuiMailboxHint {

@@ -3,7 +3,7 @@
 <#
     Mailbox Message Report - automated tests (Pester 6.1 or later).
     Author  : Nicolas Fabert
-    Version : 1.1.1
+    Version : 2.0.0
 
     Run:  .\Run-Tests.ps1      (or Invoke-Pester -Path .\tests -Output Detailed)
 
@@ -51,6 +51,19 @@ BeforeAll {
         Export-MmrReport -Result $Search.Result -Directory $Search.Run -Prefix 'MailboxMessageReport' -Formats $Formats -Layout $Layout -HtmlMaxMessages $HtmlMax -PreviewMessages $Preview -PartsPath (Join-Path $Search.Run '.parts')
     }
     function Read-TestCsv([string]$Path) { Import-Csv -LiteralPath $Path -Delimiter ';' }
+    # The messages of a HTML report: its compressed blocks (gzip, base64) decoded, their columns and dictionaries joined.
+    function Read-TestHtml([string]$Path) {
+        $html = Get-Content -LiteralPath $Path -Raw
+        $r = [pscustomobject]@{ Html = $html; Blocks = 0; Rows = 0; Folders = @(); Subjects = @(); People = @(); To = @(); Recipients = @(); Ids = @(); Summary = $null }
+        foreach ($b in [regex]::Matches($html, '<script type="application/x-mmr-block">(.*?)</script>')) {
+            $gzip = [IO.Compression.GZipStream]::new([IO.MemoryStream]::new([Convert]::FromBase64String($b.Groups[1].Value)), [IO.Compression.CompressionMode]::Decompress)
+            $reader = [IO.StreamReader]::new($gzip); $c = $reader.ReadToEnd() | ConvertFrom-Json -Depth 10; $reader.Dispose()
+            $r.Blocks++; $r.Rows += @($c.f).Count
+            $r.Folders += @($c.df); $r.Subjects += @($c.dj); $r.People += @($c.dp); $r.To += @($c.tl); $r.Recipients += @($c.ri); $r.Ids += @($c.m)
+        }
+        $r.Summary = [regex]::Match($html, '<script type="application/json" id="data-summary">(.*?)</script>', 'Singleline').Groups[1].Value | ConvertFrom-Json
+        return $r
+    }
 
     # Every Graph request goes to the simulated tenant; the requests in flight are counted per mailbox.
     Mock -ModuleName MailboxMessageReport Start-MmrGraphSend {
@@ -97,7 +110,7 @@ Describe 'Configuration and request' {
         $c.SplitFolderItems | Should -Be 5000
         $c.Recipients | Should -BeTrue
         $c.ReportLayout | Should -Be 'Global'
-        $c.HtmlMaxMessages | Should -Be 20000
+        $c.HtmlMaxMessages | Should -Be 500000
         $c.PreviewMessages | Should -Be 5000
         $c.PreviewPerFolder | Should -Be 10
         $c.ReadBody | Should -BeTrue
@@ -353,6 +366,7 @@ Describe 'Folders and messages' {
         $rows = @(Read-TestCsv (Export-Test $s).Files.Messages)
         $rows.Count | Should -Be 8
         @($rows | Where-Object { $_.To -or $_.Cc -or $_.Bcc }).Count | Should -Be 0
+        @($rows | Where-Object RecipientCount).Count | Should -Be 0
         ($rows | Where-Object Subject -eq 'Contrat Alpha - v3').From | Should -Be 'sender@fabrikam.test'
     }
 
@@ -439,10 +453,16 @@ Describe 'Report' {
         $raw = Get-Content $report.Files.Messages -Raw -Encoding utf8
         $raw | Should -Match ";'=SUM\(A1:A9\)"
         @(Read-TestCsv $report.Files.Messages).Count | Should -Be 12
-        $html = Get-Content $report.Files.Html -Raw
-        $html | Should -Not -Match '\{\{[A-Z_]+\}\}'
-        $html | Should -Not -Match '<script>alert'
-        $html | Should -Match 'Mailbox Message Report \| Alice Archive, Bob Primary'
+        $html = Read-TestHtml $report.Files.Html
+        $html.Html | Should -Not -Match '\{\{[A-Z_]+\}\}'
+        $html.Html | Should -Not -Match '<script>alert'
+        $html.Html | Should -Match '<title>Mailbox Message Report \| Alice Archive, Bob Primary</title>'
+        # Every message in the page, compressed; the subject with a script is only data.
+        $html.Rows | Should -Be 12
+        $html.Summary.MessagesShown | Should -Be 12
+        $html.Subjects | Should -Contain '=SUM(A1:A9) <script>alert(1)</script>'
+        @($html.Folders | Where-Object { $_[4] -eq '\Deletions' }).Count | Should -Be 0
+        @($html.Folders | Where-Object { $_[4] -eq '\Recoverable Items\Deletions' -and $_[3] -eq '1' }).Count | Should -Be 2
         $summary = Get-Content $report.Files.Summary -Raw | ConvertFrom-Json
         $summary.Counts.Messages | Should -Be 12
         $summary.Counts.RecoverableMessages | Should -Be 2
@@ -497,12 +517,43 @@ Describe 'Report' {
     It 'keeps the first messages in the HTML report and says so; the CSV file holds them all' {
         $s = Find-Test 'alice@contoso.test'
         $report = Export-Test $s -HtmlMax 3
-        $html = Get-Content $report.Files.Html -Raw
-        $json = [regex]::Match($html, '<script type="application/json" id="data-summary">(.*?)</script>', 'Singleline').Groups[1].Value | ConvertFrom-Json
-        $json.MessagesShown | Should -Be 3
-        $json.MessagesTotal | Should -Be 8
-        $json.Columns[0] | Should -Be 'Mailbox'
+        $html = Read-TestHtml $report.Files.Html
+        $html.Summary.MessagesShown | Should -Be 3
+        $html.Summary.MessagesTotal | Should -Be 8
+        $html.Summary.Columns[0] | Should -Be 'Mailbox'
+        $html.Rows | Should -Be 3
         @(Read-TestCsv $report.Files.Messages).Count | Should -Be 8
+        # By default every message is in the page, in blocks of 20,000 (Report.HtmlMaxMessages: 500,000).
+        $all = Read-TestHtml (Export-Test (Find-Test 'alice@contoso.test') -HtmlMax 500000).Files.Html
+        $all.Rows | Should -Be 8
+        $all.Blocks | Should -Be 1
+    }
+
+    It 'keeps a message of 10,000 recipients readable in Excel; RecipientCount and the HTML report give them all' {
+        Reset-FakeTenant -TenantId $script:Tenant
+        $null = Add-FakeUser 'dl@contoso.test'
+        $to = @(1..10000 | ForEach-Object { 'person{0:D5}@contoso.test' -f $_ })
+        $null = Add-FakeMessage 'dl@contoso.test' -Path '\Inbox' -Subject 'All staff' -Received '2026-05-01T08:00:00' -To $to -Cc 'boss@contoso.test'
+        $null = Add-FakeMessage 'dl@contoso.test' -Path '\Inbox' -Subject 'Small' -Received '2026-05-02T08:00:00' -To 'a@contoso.test', 'b@contoso.test'
+        $s = Find-Test 'dl@contoso.test'
+        $report = Export-Test $s
+        $rows = @(Read-TestCsv $report.Files.Messages)
+        $rows.Count | Should -Be 2
+        $big = $rows | Where-Object Subject -eq 'All staff'
+        $big.To.Length | Should -BeLessOrEqual 32000
+        $big.To | Should -Match '^person00001@contoso\.test; .*; \u2026 \(\+[\d,]+ more\)$'
+        $kept = ($big.To -split '; ').Count - 1
+        [int](($big.To -replace '^.*\(\+([\d,]+) more\)$', '$1') -replace ',', '') | Should -Be (10000 - $kept)
+        $big.Cc | Should -Be 'boss@contoso.test'
+        $big.RecipientCount | Should -Be '10001'
+        ($rows | Where-Object Subject -eq 'Small').RecipientCount | Should -Be '2'
+        ($rows | Where-Object Subject -eq 'Small').To | Should -Be 'a@contoso.test; b@contoso.test'
+        # The HTML report keeps every recipient (the detail of a message lists them all).
+        $html = Read-TestHtml $report.Files.Html
+        $html.Rows | Should -Be 2
+        $html.To | Should -Be @(2, 10000)
+        @($html.Recipients).Count | Should -Be 10003
+        $html.People | Should -Contain 'person10000@contoso.test'
     }
 
     It 'writes one report per mailbox (read ones only), with a summary that links to them' {
@@ -513,10 +564,11 @@ Describe 'Report' {
         $dir = Join-Path $s.Run 'Mailboxes'
         (Get-ChildItem $dir).Name | Should -Be @('MailboxMessageReport-alice@contoso.test.csv', 'MailboxMessageReport-alice@contoso.test.html', 'MailboxMessageReport-bob@contoso.test.csv', 'MailboxMessageReport-bob@contoso.test.html')
         @(Read-TestCsv (Join-Path $dir 'MailboxMessageReport-bob@contoso.test.csv')).Count | Should -Be 2
-        $html = Get-Content $report.Files.Html -Raw
-        $html | Should -Match 'Mailboxes/MailboxMessageReport-alice@contoso.test.html'
-        $json = [regex]::Match($html, 'id="data-summary">(.*?)</script>', 'Singleline').Groups[1].Value | ConvertFrom-Json
-        $json.MessagesHere | Should -BeFalse
+        (Read-TestHtml (Join-Path $dir 'MailboxMessageReport-bob@contoso.test.html')).Rows | Should -Be 2
+        $html = Read-TestHtml $report.Files.Html
+        $html.Html | Should -Match 'Mailboxes/MailboxMessageReport-alice@contoso.test.html'
+        $html.Summary.MessagesHere | Should -BeFalse
+        $html.Rows | Should -Be 0
         $both = Export-Test (Find-Test 'alice@contoso.test') -Layout Both
         $both.Files.Contains('Messages') | Should -BeTrue
         $both.MailboxFiles | Should -Be 1

@@ -1,7 +1,7 @@
 <#
     Mailbox Message Report - simulated Exchange Online tenant behind Microsoft Graph, for the tests.
     Author  : Nicolas Fabert
-    Version : 1.1.1
+    Version : 2.0.0
 
     Start-MmrGraphSend (the only function of the tool that touches the network for Graph) is replaced by a mock that
     answers from this tenant: users, their primary mailbox and archive, folders, messages, $batch (v1.0 and beta). It

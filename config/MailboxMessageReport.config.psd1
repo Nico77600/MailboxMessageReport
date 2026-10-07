@@ -2,7 +2,7 @@
 #  Mailbox Message Report - configuration file
 #  --------------------------------------------------------------------------
 #  Author  : Nicolas Fabert
-#  Version : 1.1.1
+#  Version : 2.0.0
 #
 #  Read by Invoke-MailboxMessageReport.ps1 and by the window (-Gui). It is a PowerShell data file: text between
 #  quotes, $true / $false, numbers, @( ) for lists and @{ } for groups of settings. Lines starting with # are
@@ -79,15 +79,15 @@
     # Report files (one sub-folder per run), written locally only.
     #   Layout: 'Global' one report for every mailbox, 'PerMailbox' one report per mailbox (folder Mailboxes\,
     #           plus a summary with a link to each one), 'Both'.
-    #   HtmlMaxMessages: messages shown in a HTML report (each CSV file holds them all), 0 to 200,000. 200,000 makes a
-    #     report of about 120 MB that a browser opens in about 3 s (search and sort under a second); 20,000: about 12 MB.
+    #   HtmlMaxMessages: the most messages of a HTML report, 0 to 2,000,000: every message below it (each CSV file
+    #     holds them all). The messages are compressed in the page and shown in a virtual table with filters.
     # ---------------------------------------------------------------------
     Report = @{
         OutputPath      = '.\reports'
         FilePrefix      = 'MailboxMessageReport'
         Formats         = @('Csv', 'Html')   # a Summary.json file is always written as well
         Layout          = 'Global'           # Global | PerMailbox | Both
-        HtmlMaxMessages = 20000
+        HtmlMaxMessages = 500000
         CsvDelimiter    = ';'                # ';' opens directly in Excel with French regional settings
         TimeZone        = ''                 # dates typed and shown: '' = the time zone of Windows, or Europe/Paris...
     }

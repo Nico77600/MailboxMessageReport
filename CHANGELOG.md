@@ -2,6 +2,16 @@
 
 All notable changes to Mailbox Message Report. Versions: MAJOR.MINOR.PATCH (developer guide, appendix D).
 
+## 2.0.0 - 2026-10-07
+
+Every message in the HTML report, and a CSV file Excel always opens. The format of the reports changes (MAJOR).
+
+- **HTML report like the one of Purview DLP Report**: every message (up to `Report.HtmlMaxMessages`, now 500,000 by default, 0 to 2,000,000; 20,000 before), in compressed blocks of 20,000 (JSON, gzip, base64; folders, subjects, addresses, names and types once in dictionaries), decompressed by the page into typed arrays, in a table that draws only the visible rows. 200,000 messages: 6.5 MB, open in 1.1 s; 1,000,000: 32 MB, 4.1 s, 305 MB in the page (1.x: 200,000 messages in 118 MB, 200 rows at a time).
+- **Filters** together: every field, mailbox, location, folder, sender, subject, recipient (To, Cc, Bcc), Internet message ID, received dates, minimum of recipients, with attachments; **sort** by a click on a column; **every recipient** of a message in its detail (To, Cc, Bcc with *Copy*); **Export the view to CSV**.
+- **CSV safe for Excel**: a cell is never longer than an Excel cell (32,767 characters). A list of recipients is cut after its last whole address, with the number of the others (`… (+8,739 more)`). A message sent to 10,000 people broke the row in Excel (4 rows × 8,750 columns, measured): one row of 23 columns now.
+- **New column `RecipientCount`** (To + Cc + Bcc; empty with `-SkipRecipients`) in the CSV files, after `Bcc`.
+- `MailboxMessageReportNative.HtmlReport` replaces `Merge.WriteHtml`; the columns are read by name (`Columns.I*`). The item ID stays in the CSV files only.
+- 36 Pester tests (the blocks of the HTML report decoded as the page does, a message of 10,000 recipients); the measurement tool writes realistic pages (every message ID unique, 300 people).
 ## 1.1.1 - 2026-10-07
 
 Pages cut short by Exchange Online.

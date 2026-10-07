@@ -18,7 +18,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.1
+    Version : 2.0.0
 #>
 
 # Section.Key of the configuration file -> key of the settings hashtable.
@@ -61,7 +61,7 @@ function Get-MmrDefaultConfiguration {
         ReportPrefix          = 'MailboxMessageReport'
         ReportFormats         = @('Csv', 'Html')
         ReportLayout          = 'Global'
-        HtmlMaxMessages       = 20000
+        HtmlMaxMessages       = 500000
         CsvDelimiter          = ';'
         TimeZone              = ''
         PreviewMessages       = 5000
@@ -152,7 +152,7 @@ function Test-MmrConfiguration {
     $formats = @($c.ReportFormats)
     if ($formats.Count -eq 0 -or @($formats | Where-Object { $_ -notin 'Csv', 'Html' }).Count) { [void]$problems.Add("Report.Formats must contain 'Csv', 'Html' or both.") }
     if ([string]$c.ReportLayout -notin $script:Layouts) { [void]$problems.Add("Report.Layout must be one of: $($script:Layouts -join ', ').") }
-    & $number 'HtmlMaxMessages' 'Report.HtmlMaxMessages' 0 200000
+    & $number 'HtmlMaxMessages' 'Report.HtmlMaxMessages' 0 2000000
     if ([string]$c.CsvDelimiter -notin ';', ',', "`t") { [void]$problems.Add("Report.CsvDelimiter must be ';', ',' or a tab.") }
     if ([string]$c.TimeZone) { try { $null = Get-MmrTimeZone $c.TimeZone } catch { [void]$problems.Add("Report.TimeZone '$($c.TimeZone)' is not a time zone of this computer (for example Europe/Paris, or empty).") } }
     & $number 'PreviewMessages' 'Window.PreviewMessages' 0 50000

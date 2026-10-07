@@ -26,7 +26,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.1
+    Version : 2.0.0
 #>
 
 $script:GraphRoot = 'https://graph.microsoft.com/v1.0'
