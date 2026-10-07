@@ -1,7 +1,7 @@
 ---
 title: Mailbox Message Report
 subtitle: Developer guide
-version: 1.0.0
+version: 1.1.0
 author: Nicolas Fabert
 updated: 2026-10-07
 ---
@@ -164,7 +164,7 @@ The tool signs in as an **application** (no user), with application permissions 
 
 | Permission | Why | Without it |
 |---|---|---|
-| `Mail.ReadBasic.All` | the folders and the messages (every column of the report) of the primary mailbox, the archive and Recoverable Items | required; `Mail.Read` or `Mail.ReadWrite` count as well (they also give the body, which the tool never reads) |
+| `Mail.ReadBasic.All` | the folders and the messages (every column of the report) of the primary mailbox, the archive and Recoverable Items | required; `Mail.Read` or `Mail.ReadWrite` count as well. `Mail.Read` also gives the content of a message: only the reading pane of the window reads it, one message at a time (chapter 9); the reports never hold it |
 | `User.Read.All` | the user of each address (any alias, the display name) and the ID of its archive (`settings/exchange`) | the address is read as typed; the archive only from the `ArchiveGuid` of a CSV list (chapter 3) |
 
 Measured with temporary applications in the lab tenant (2026-10-07; the lab scripts are not part of the repository):
@@ -247,7 +247,9 @@ Get-ChildItem 'C:\Tools\MailboxMessageReport' -Recurse -File -Force | Unblock-Fi
 | `Report.HtmlMaxMessages` | `20000` | Messages shown in a HTML report (0 to 200,000; 200,000 = about 120 MB, opens in about 3 s); each CSV file holds them all. |
 | `Report.CsvDelimiter` | `;` | `;`, `,` or a tab. |
 | `Report.TimeZone` | *Windows* | Time zone of the dates typed and shown (`Europe/Paris`...). |
-| `Window.PreviewMessages` | `1000` | Messages in the preview of the window. |
+| `Window.PreviewMessages` | `5000` | Messages in the preview of the window, at most (0 to 50,000). |
+| `Window.PreviewPerFolder` | `10` | The first messages (newest first) of each folder kept for the preview (0 to 1,000; `0` = the first messages of the report, whatever their folder). |
+| `Window.ReadBody` | `$true` | The reading pane of the window shows the content of the message selected, read then from Graph as text; needs `Mail.Read` (chapter 5), each read written to the log. `$false`: never. |
 | `Logging.Path` · `RetentionDays` | `.\logs` · `30` | One log file per day. |
 
 A list of mailboxes (`-MailboxFile`, `Search.MailboxFile`, *Load a list...* in the window) is a text file with one address per line (`#` = comment), or a CSV file (comma or semicolon) with a column `PrimarySmtpAddress`, `EmailAddress`, `Mail`, `WindowsEmailAddress`, `UserPrincipalName`, `Address` or `Mailbox`, and optionally `ArchiveGuid` — for example the export of `Get-EXOMailbox -Properties ArchiveGuid` (chapter 3). An `ArchiveGuid` of zeros (no archive) is ignored.
@@ -300,10 +302,19 @@ The console shows the steps (Microsoft Graph, mailboxes, folders, messages, repo
 ![The window after a search](images/gui-search-light.png)
 
 - **Left**: the mailboxes (typed, or *Load a list...*: a CSV list keeps its `ArchiveGuid`), the period and the subjects (one per line), the recipients, where to read (primary mailbox, archive, Recoverable Items, folders left out), the report (CSV, HTML, global or per mailbox), the connection.
-- **Right**: the mailboxes read, with their messages in the primary mailbox, the archive and Recoverable Items; a **preview** of the first messages of the report (`Window.PreviewMessages`, 1,000) — sortable, for a first look; and the progress, with the step, the part done and the time left.
+- **Right**: the mailboxes read, with their messages in the primary mailbox, the archive and Recoverable Items; a **preview** of the messages found; and the progress, with the step, the part done and the time left.
 - **Bottom**: *Read the messages*, *Stop*, *Open the report*, *Open the CSV*, *Open the folder*.
 
-The window is made to type the search and follow it: a mailbox can hold hundreds of thousands of messages, and the report is the place to read them (search, sort, every column). The run goes on in a runspace of its own: the window always answers; *Stop* ends it at the next page, without a report.
+The preview keeps the first 10 messages of each folder, newest first (`Window.PreviewPerFolder`), 5,000 in all at most (`Window.PreviewMessages`), and shows them two ways:
+
+- **Folders**, like Outlook: on the left the tree of each mailbox — *Primary mailbox*, *Archive* and, when read, *Recoverable Items* under each — with the messages found in each folder (a folder without any is greyed, a folder not read is in red); in the middle the messages of the folder selected (sender, subject, date, attachment); on the right the **reading pane**: subject, sender, To, Cc, Bcc, dates, location and folder, Internet message ID, and the **content** of the message.
+- **List**: every message of the preview in one sortable list (mailbox, location, folder, date, subject, sender, recipients).
+
+The content is read only when a message is selected in the folder view, one at a time (`GET /users/{id}/messages/{id}?$select=body`, as text, cut at 200,000 characters), with the connection of the search: it needs the application permission `Mail.Read` — with `Mail.ReadBasic.All` only, the reading pane says so and shows the rest. Each content read is written to the log (mailbox, location, folder, Internet message ID); `Window.ReadBody = $false` turns it off. The content is never written to a report.
+
+![The same preview as a list](images/gui-list-light.png)
+
+The window is made to type the search, follow it and look at what was found: a mailbox can hold hundreds of thousands of messages, and the report is the place to read them all (search, sort, every column). The run goes on in a runspace of its own: the window always answers; *Stop* ends it at the next page, without a report.
 
 <!-- icon: chart -->
 ## 10. Reading the report
@@ -362,7 +373,7 @@ A cell starting with `=`, `+`, `-` or `@` is prefixed with an apostrophe in the 
 
 **Pages to disk.** The body of a page is read as bytes (`Body`) and given to the compiled `PartWriter` of its folder, which parses it (`System.Text.Json`) and appends one JSON array per message to the part file: the memory does not grow with the messages. A page never goes through a PowerShell string: a .NET method called from PowerShell with a string of 1 MB costs about 100 ms (the argument is scanned), measured while building the tool. The report merges the part files in order (`Merge.AppendPart`) into the CSV files and the row buffers of the HTML reports and the window; the HTML report is written by `Merge.WriteHtml` from its template.
 
-**Window.** The window thread only draws: a run is handed to a second runspace (`Start-MmrGuiWork`), which sends its lines through a queue read every 100 ms (`Step-MmrGuiWork`); the result and the preview come back at the end. *Stop* goes through a shared synchronized table.
+**Window.** The window thread only draws: a run is handed to a second runspace (`Start-MmrGuiWork`), which sends its lines through a queue read every 100 ms (`Step-MmrGuiWork`); the result and the preview come back at the end. *Stop* goes through a shared synchronized table. The preview is kept by the report (`Export-MmrReport -PreviewPerFolder`: a row buffer per folder, the first N rows of each); the tree of the folder view is built by the compiled `FolderNode.Build` from the mailboxes, the folders and the preview rows. The content of a message is a second kind of work of the same runspace (`Invoke-MmrGuiWork -Kind Body`), started 300 ms after a message is selected (moving through the list does not read each message) and kept with its row.
 
 <!-- icon: clock -->
 ## 13. Performance and limits
@@ -402,7 +413,7 @@ pwsh -File .\tools\Measure-MailboxMessageReport.ps1 -Messages 500000 -Simulated
 .\Run-Tests.ps1      # Pester 6.1+, simulated tenant, no network
 ```
 
-`tests\MailboxMessageReport.FakeGraph.ps1` replaces the transport with a simulated Exchange Online that behaves like the lab: `settings/exchange` in beta (the archive ID, *MailboxNotEnabledForRESTAPI* for a mailbox on-premises), a mailbox opened by its user ID, any alias or its `MBX:` ID, the folder tree of `mailFolders/delta` in pages (`Prefer: odata.maxpagesize`), Recoverable Items, the messages filtered by date and subject with `contains()` refused before the date (*InefficientFilter*), `$select`, `$orderby` ascending or descending, `$top` / `$skip` and their nextLink, `$batch` in v1.0 and beta, 429 and failures on demand; every request is recorded with the most requests in flight per mailbox. The tests cover the configuration, the lists of mailboxes (text, CSV, `ArchiveGuid`), the request and the filter, the connection and the permissions, the mailboxes (alias, archive from Graph or from the list, on-premises, not a mailbox, twice under two aliases), the folders (paths, Recoverable Items, empty, left out), the messages (period, subjects, columns, time zone, order, pages, 4 per mailbox, slices of a large folder, without recipients, 429 retried, a folder that fails), *Stop*, the report (global, per mailbox, both, CSV safe for Excel, HTML safe, the first messages of the HTML, `Summary.json`, the part files deleted), the window (configuration, a search with its preview, values to fix), the time left and the command line.
+`tests\MailboxMessageReport.FakeGraph.ps1` replaces the transport with a simulated Exchange Online that behaves like the lab: `settings/exchange` in beta (the archive ID, *MailboxNotEnabledForRESTAPI* for a mailbox on-premises), a mailbox opened by its user ID, any alias or its `MBX:` ID, the folder tree of `mailFolders/delta` in pages (`Prefer: odata.maxpagesize`), Recoverable Items, the messages filtered by date and subject with `contains()` refused before the date (*InefficientFilter*), `$select`, `$orderby` ascending or descending, `$top` / `$skip` and their nextLink, `$batch` in v1.0 and beta, one message by its ID with its body as text (`Prefer: outlook.body-content-type="text"`), 429 and failures on demand; every request is recorded with the most requests in flight per mailbox. The tests cover the configuration, the lists of mailboxes (text, CSV, `ArchiveGuid`), the request and the filter, the connection and the permissions, the mailboxes (alias, archive from Graph or from the list, on-premises, not a mailbox, twice under two aliases), the folders (paths, Recoverable Items, empty, left out), the messages (period, subjects, columns, time zone, order, pages, 4 per mailbox, slices of a large folder, without recipients, 429 retried, a folder that fails), *Stop*, the report (global, per mailbox, both, CSV safe for Excel, HTML safe, the first messages of the HTML, `Summary.json`, the part files deleted), the window (configuration, a search with its preview, the first messages of each folder, the folder tree, the folder view and the content of a message in the reading pane, values to fix), the time left and the command line.
 
 <!-- icon: book -->
 ## 15. Documentation and package
@@ -450,9 +461,9 @@ A link from one guide to the other is written with its GitHub anchor (`MailboxMe
 ## Appendix B - Security
 
 - The token and the client secret stay in memory: never in the console, the log or the reports. The certificate stays in the Windows store.
-- The tool only reads, with `Mail.ReadBasic.All`: never the body, the attachments or the headers of a message; it never changes a mailbox, not even the read state of a message.
+- The tool only reads; it never changes a mailbox, not even the read state of a message. With `Mail.ReadBasic.All` it cannot read the body, the attachments or the headers of a message. With `Mail.Read`, the reading pane of the window reads the content of the message selected, one at a time, each read written to the log; the reports never hold it, the attachments are never read. `Window.ReadBody = $false` turns it off.
 - The reports contain addresses, subjects and folder names: store and send them as personal data. The part files of a run are deleted once the report is written (and when a run fails or is stopped).
-- **Least rights**: `Mail.ReadBasic.All` rather than `Mail.Read`; `User.Read.All` can be left out with the `ArchiveGuid` of a list; RBAC for Applications limits the mailboxes (chapter 5).
+- **Least rights**: `Mail.ReadBasic.All` rather than `Mail.Read` (only the reading pane of the window needs it); `User.Read.All` can be left out with the `ArchiveGuid` of a list; RBAC for Applications limits the mailboxes (chapter 5).
 - CSV cells starting with `=`, `+`, `-`, `@` are neutralised; the HTML report escapes every value and holds its data in JSON blocks (no script from a subject runs).
 
 <!-- icon: beaker -->
@@ -479,6 +490,7 @@ A lab tenant, Microsoft Graph v1.0 and beta, application token, 2026-10-07. Test
 | A room mailbox, *Deleted Items* of 39,419 meeting messages: a page of 1,000 with `$select` subject; + dates and message ID; + from and sender; + to, cc, bcc; every column; every column, 250 | 0.4; 0.4; 0.5; **28.5**; 31.2; 6.4 s |
 | Tool on it, `-SkipRecipients` (8 slices, pages of 1,000) | 39,434 messages, each once, in date order, 42.5 s |
 | Tool on it, with the recipients (8 slices, pages of 1,000) | 39,434 messages, each once, To filled for 39,425 (the others had none), 7 min 27 s |
+| Window, 3 mailboxes, subjects *Contrat Alpha* or *Facture*, Recoverable Items (`Mail.Read`) | 963 messages; folder view: 150 messages in the preview (the first 10 of each folder), the first folder with messages selected, the content of its first message read as text in the reading pane |
 
 <!-- icon: tag -->
 ## Appendix D - Versions

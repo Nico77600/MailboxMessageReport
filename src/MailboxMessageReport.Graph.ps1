@@ -26,7 +26,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.0.0
+    Version : 1.1.0
 #>
 
 $script:GraphRoot = 'https://graph.microsoft.com/v1.0'
@@ -283,16 +283,16 @@ function Get-MmrMailboxKey {
 function Invoke-MmrGraph {
     <#
         One request (not batched), with the same retries as the batches. Path relative to /v1.0 or an
-        absolute URL (nextLink). Returns @{ Status; Body; ErrorCode; ErrorMessage }.
+        absolute URL (nextLink). Returns @{ Status; Body; ErrorCode; ErrorMessage }. Headers: Prefer...
     #>
-    param([string]$Method = 'GET', [Parameter(Mandatory = $true)][string]$Path, $Body)
+    param([string]$Method = 'GET', [Parameter(Mandatory = $true)][string]$Path, $Body, [hashtable]$Headers)
 
     $url = if ($Path -match '^https://') { $Path } else { "$($script:GraphRoot)/$($Path.TrimStart('/'))" }
     $json = if ($null -eq $Body) { $null } elseif ($Body -is [string]) { $Body } else { $Body | ConvertTo-Json -Depth 20 -Compress }
     $max = [int]$script:Graph.Settings.MaxRetries
     for ($attempt = 0; ; $attempt++) {
         Update-MmrToken
-        $handle = Start-MmrGraphSend -Method $Method -Url $url -Body $json
+        $handle = Start-MmrGraphSend -Method $Method -Url $url -Body $json -Headers $Headers
         while (-not (Test-MmrGraphSendDone $handle)) { Wait-MmrUi 30 -NoCancel }
         $r = Complete-MmrGraphSend $handle
         $parsed = ConvertFrom-MmrJson $r.Content

@@ -24,7 +24,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.0.0
+    Version : 1.1.0
 #>
 
 $script:Gui = $null
@@ -33,7 +33,7 @@ function Get-MmrGuiXaml {
     <# The window. Colours come from the Fluent theme resources (or the classic fallback of Set-MmrGuiTheme). #>
     @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Width="1320" Height="900" MinWidth="1080" MinHeight="680" WindowStartupLocation="CenterScreen"
+        Width="1480" Height="940" MinWidth="1080" MinHeight="680" WindowStartupLocation="CenterScreen"
         FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="14" UseLayoutRounding="True">
   <Window.Resources>
     <Style x:Key="MmrCard" TargetType="Border">
@@ -201,7 +201,7 @@ function Get-MmrGuiXaml {
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="*" MinHeight="200"/>
           <RowDefinition Height="Auto"/>
-          <RowDefinition Height="200" MinHeight="110"/>
+          <RowDefinition Height="170" MinHeight="110"/>
         </Grid.RowDefinitions>
         <Border Style="{StaticResource MmrCard}" Margin="0,0,0,12">
           <Grid>
@@ -221,7 +221,7 @@ function Get-MmrGuiXaml {
                 <TextBlock x:Name="Status" FontSize="12" FontWeight="SemiBold"/>
               </Border>
             </Grid>
-            <ListView x:Name="Mailboxes" Grid.Row="1" Height="150" SelectionMode="Single" BorderThickness="0" Background="Transparent" FontSize="13"
+            <ListView x:Name="Mailboxes" Grid.Row="1" Height="112" SelectionMode="Single" BorderThickness="0" Background="Transparent" FontSize="13"
                       VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                       ItemContainerStyle="{StaticResource MmrRow}">
               <ListView.View>
@@ -238,7 +238,7 @@ function Get-MmrGuiXaml {
             </ListView>
           </Grid>
         </Border>
-        <Border Grid.Row="1" Style="{StaticResource MmrCard}" Margin="0,0,0,6">
+        <Border Grid.Row="1" Style="{StaticResource MmrCard}" Margin="0,0,0,6" Padding="14,12,14,12">
           <Grid>
             <Grid.RowDefinitions>
               <RowDefinition Height="Auto"/>
@@ -248,13 +248,117 @@ function Get-MmrGuiXaml {
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
               </Grid.ColumnDefinitions>
               <TextBlock Text="Preview" Style="{StaticResource MmrCardTitle}"/>
-              <TextBlock x:Name="PreviewInfo" Grid.Column="1" Margin="12,1,0,8" FontSize="12" VerticalAlignment="Top" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+              <TextBlock x:Name="PreviewInfo" Grid.Column="1" Margin="12,1,12,8" FontSize="12" VerticalAlignment="Top" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+              <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="0,-4,0,6">
+                <RadioButton x:Name="ViewFolders" GroupName="PreviewView" Content="Folders" Margin="0,0,14,0" MinWidth="0"/>
+                <RadioButton x:Name="ViewList" GroupName="PreviewView" Content="List" MinWidth="0"/>
+              </StackPanel>
             </Grid>
-            <!-- ListView/GridView rather than DataGrid: less layout per row, the list scrolls with thousands of rows.
-                 Rows are compiled objects (MailboxMessageReportNative.PreviewRow). -->
-            <ListView x:Name="Preview" Grid.Row="1" SelectionMode="Single" BorderThickness="0" Background="Transparent" FontSize="13"
+            <!-- Folders: the tree of every mailbox (primary mailbox, archive, Recoverable Items), the messages of the folder
+                 selected, the message selected - like Outlook. Rows and nodes are compiled objects (PreviewRow, FolderNode). -->
+            <Grid x:Name="FolderView" Grid.Row="1">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="230" MinWidth="140"/>
+                <ColumnDefinition Width="6"/>
+                <ColumnDefinition Width="*" MinWidth="220"/>
+                <ColumnDefinition Width="6"/>
+                <ColumnDefinition Width="*" MinWidth="240"/>
+              </Grid.ColumnDefinitions>
+              <TreeView x:Name="FolderTree" BorderThickness="0" Background="Transparent" FontSize="13"
+                        VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <TreeView.ItemContainerStyle>
+                  <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                    <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                    <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
+                    <Setter Property="ToolTip" Value="{Binding Tip}"/>
+                    <Setter Property="Padding" Value="0,1"/>
+                  </Style>
+                </TreeView.ItemContainerStyle>
+                <TreeView.ItemTemplate>
+                  <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" Margin="0,2,8,0" Foreground="{DynamicResource MmrBrandText}"/>
+                      <TextBlock x:Name="NodeName" Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                      <TextBlock Grid.Column="2" Text="{Binding CountText}" Margin="8,0,0,0" FontWeight="SemiBold" Foreground="{DynamicResource MmrBrandText}"/>
+                    </Grid>
+                    <HierarchicalDataTemplate.Triggers>
+                      <DataTrigger Binding="{Binding Dim}" Value="True">
+                        <Setter TargetName="NodeName" Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}"/>
+                      </DataTrigger>
+                      <DataTrigger Binding="{Binding Status}" Value="Failed">
+                        <Setter TargetName="NodeName" Property="Foreground" Value="{DynamicResource MmrCritical}"/>
+                      </DataTrigger>
+                    </HierarchicalDataTemplate.Triggers>
+                  </HierarchicalDataTemplate>
+                </TreeView.ItemTemplate>
+              </TreeView>
+              <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch" Background="Transparent" ResizeBehavior="PreviousAndNext"/>
+              <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto"/>
+                  <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <TextBlock x:Name="FolderTitle" FontSize="12" FontWeight="SemiBold" Margin="10,0,0,6" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                <ListView x:Name="FolderMessages" Grid.Row="1" SelectionMode="Single" BorderThickness="0" Background="Transparent"
+                          VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                  <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem" BasedOn="{StaticResource {x:Type ListViewItem}}">
+                      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                      <Setter Property="Padding" Value="10,6"/>
+                    </Style>
+                  </ListView.ItemContainerStyle>
+                  <ListView.ItemTemplate>
+                    <DataTemplate>
+                      <Grid>
+                        <Grid.RowDefinitions>
+                          <RowDefinition Height="Auto"/>
+                          <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*"/>
+                          <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding FromDisplay}" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0">
+                          <TextBlock Text="{Binding AttachmentGlyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" Margin="0,3,6,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                          <TextBlock Text="{Binding ReceivedShort}" FontSize="11" Margin="0,2,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Subject}" FontSize="12" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource MmrBrandText}"/>
+                      </Grid>
+                    </DataTemplate>
+                  </ListView.ItemTemplate>
+                </ListView>
+              </Grid>
+              <GridSplitter Grid.Column="3" Width="6" HorizontalAlignment="Stretch" Background="Transparent" ResizeBehavior="PreviousAndNext"/>
+              <Border x:Name="ReadingPane" Grid.Column="4" BorderThickness="1,0,0,0" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}" Padding="14,0,0,0">
+                <Grid>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                  </Grid.RowDefinitions>
+                  <StackPanel x:Name="ReadingHeader">
+                    <TextBlock x:Name="ReadSubject" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                    <TextBlock x:Name="ReadFrom" FontSize="13" FontWeight="SemiBold" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                    <TextBlock x:Name="ReadDetails" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                    <Border Height="1" Margin="0,10,0,8" Background="{DynamicResource DividerStrokeColorDefaultBrush}"/>
+                  </StackPanel>
+                  <TextBox x:Name="ReadBody" Grid.Row="1" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" Padding="0" FontSize="13"
+                           VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                  <TextBlock x:Name="ReadEmpty" Grid.RowSpan="2" Margin="0,40,0,0" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center" FontSize="13" Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                             Text="Select a message to read it."/>
+                </Grid>
+              </Border>
+            </Grid>
+            <!-- List: every message of the preview, flat and sortable. -->
+            <ListView x:Name="Preview" Grid.Row="1" SelectionMode="Single" BorderThickness="0" Background="Transparent" FontSize="13" Visibility="Collapsed"
                       VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Item"
                       ScrollViewer.HorizontalScrollBarVisibility="Disabled" ItemContainerStyle="{StaticResource MmrRow}">
               <ListView.View>
@@ -268,7 +372,7 @@ function Get-MmrGuiXaml {
               </ListView.View>
             </ListView>
             <TextBlock x:Name="PreviewEmpty" Grid.Row="1" Margin="4,48,4,0" TextWrapping="Wrap" HorizontalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                       Text="Type the mailboxes, the period or the subjects, then Read the messages. The window shows the first messages; the report holds them all."/>
+                       Text="Type the mailboxes, the period or the subjects, then Read the messages. The window shows the first messages of each folder; the report holds them all."/>
           </Grid>
         </Border>
         <GridSplitter Grid.Row="2" Height="6" HorizontalAlignment="Stretch" Background="Transparent" ResizeBehavior="PreviousAndNext"/>
@@ -462,7 +566,7 @@ function New-MmrForm {
     foreach ($name in 'Root', 'Header', 'Version', 'SettingsScroll', 'Inputs', 'Mailbox', 'LoadMailboxes', 'MailboxHint', 'StartDate', 'EndDate', 'Subject',
         'Recipients', 'LocationPrimary', 'LocationArchive', 'RecoverableItems', 'ExcludeFolders', 'FormatCsv', 'FormatHtml', 'LayoutGlobal', 'LayoutPerMailbox', 'LayoutBoth', 'ReportHint',
         'ConnectionExpander', 'TenantId', 'AppId', 'AuthMode', 'ThumbPanel', 'Thumbprint', 'SecretPanel', 'Secret', 'ConfigHint', 'Counts', 'StatusPill', 'Status',
-        'Mailboxes', 'Preview', 'PreviewInfo', 'PreviewEmpty', 'ProgressBar', 'ProgressText', 'ProgressInfo', 'LogScroll', 'Log', 'Actions', 'Search', 'Stop', 'Footer',
+        'Mailboxes', 'Preview', 'PreviewInfo', 'PreviewEmpty', 'ViewFolders', 'ViewList', 'FolderView', 'FolderTree', 'FolderTitle', 'FolderMessages', 'ReadingPane', 'ReadingHeader', 'ReadSubject', 'ReadFrom', 'ReadDetails', 'ReadBody', 'ReadEmpty', 'ProgressBar', 'ProgressText', 'ProgressInfo', 'LogScroll', 'Log', 'Actions', 'Search', 'Stop', 'Footer',
         'OpenReport', 'OpenCsv', 'OpenFolder', 'Close') {
         $controls[$name] = $window.FindName($name)
     }
@@ -496,9 +600,14 @@ function New-MmrForm {
     # Lists replaced in one go (one refresh), rows compiled (MailboxMessageReportNative.MailboxRow / PreviewRow).
     $mailboxRows = [MailboxMessageReportNative.BulkCollection]::new()
     $previewRows = [MailboxMessageReportNative.BulkCollection]::new()
+    $treeRows = [MailboxMessageReportNative.BulkCollection]::new()
+    $folderRows = [MailboxMessageReportNative.BulkCollection]::new()
     $items = [Collections.ObjectModel.ObservableCollection[object]]::new()
     $controls.Mailboxes.ItemsSource = $mailboxRows
     $controls.Preview.ItemsSource = $previewRows
+    $controls.FolderTree.ItemsSource = $treeRows
+    $controls.FolderMessages.ItemsSource = $folderRows
+    $controls.ViewFolders.IsChecked = $true
     $controls.Log.ItemsSource = $items
     # The channel of the background run (Start-MmrGuiWork): its lines, Stop (Cancel), the log file. Every key the engine
     # reads is there (a synchronized hashtable throws on a missing key under Set-StrictMode).
@@ -509,7 +618,9 @@ function New-MmrForm {
     $script:Gui = @{
         Form = $window; Controls = $controls; Configuration = $Configuration.Clone(); Settings = $null; Theme = $look
         Running = $false; Result = $null; LastReport = $null; LastCsv = $null; LastFolder = $null
-        ArchiveGuids = @{}; MailboxRows = $mailboxRows; PreviewRows = $previewRows; Items = $items; Lines = [Collections.Generic.List[string]]::new()
+        ArchiveGuids = @{}; MailboxRows = $mailboxRows; PreviewRows = $previewRows; TreeRows = $treeRows; FolderRows = $folderRows; Items = $items; Lines = [Collections.Generic.List[string]]::new()
+        # The reading pane: the message shown, the one waiting for its content (read a moment after it is selected).
+        Reading = $null; BodyWanted = $null; BodyTimer = $null; CanReadBody = $false; MailboxKeys = @{}
         Shared = $shared; Timer = $timer; Job = $null; Runspace = $null
         # The progress of the run in course (Set-MmrGuiProgress): its step, its start, the part done (-1: none yet).
         Progress = @{ Active = $false; Step = ''; Started = [datetime]::UtcNow; Fraction = -1.0; Stopping = $false }
@@ -541,6 +652,15 @@ function New-MmrForm {
     $controls.AuthMode.Add_SelectionChanged({ Update-MmrGuiState })
     foreach ($c in 'LocationPrimary', 'LocationArchive', 'FormatCsv', 'FormatHtml', 'LayoutGlobal', 'LayoutPerMailbox', 'LayoutBoth') { $controls[$c].Add_Click({ Update-MmrGuiState }) }
     $controls.LoadMailboxes.Add_Click({ Import-MmrGuiMailboxes })
+    $controls.ViewFolders.Add_Checked({ Update-MmrGuiView })
+    $controls.ViewList.Add_Checked({ Update-MmrGuiView })
+    $controls.FolderTree.Add_SelectedItemChanged({ Show-MmrGuiFolder })
+    $controls.FolderMessages.Add_SelectionChanged({ Show-MmrGuiMessage $script:Gui.Controls.FolderMessages.SelectedItem })
+    # The content of a message is read a moment after it is selected: moving through the list reads only where it stops.
+    $bodyTimer = [Windows.Threading.DispatcherTimer]::new([Windows.Threading.DispatcherPriority]::Background)
+    $bodyTimer.Interval = [TimeSpan]::FromMilliseconds(300)
+    $bodyTimer.Add_Tick({ $script:Gui.BodyTimer.Stop(); Read-MmrGuiBody })
+    $script:Gui.BodyTimer = $bodyTimer
     $controls.Mailbox.Add_TextChanged({ Update-MmrGuiMailboxHint })
     $controls.OpenReport.Add_Click({ if ($script:Gui.LastReport) { Start-Process -FilePath $script:Gui.LastReport } })
     $controls.OpenCsv.Add_Click({ if ($script:Gui.LastCsv) { Start-Process -FilePath $script:Gui.LastCsv } })
@@ -789,7 +909,7 @@ function Get-MmrGuiSettings {
 }
 
 function Update-MmrGuiRows {
-    <# The mailboxes and the preview from the result of the run, replaced in one go. #>
+    <# The mailboxes, the folder tree and the preview from the result of the run, replaced in one go. #>
     param($Preview)
     $g = $script:Gui
     $rows = foreach ($m in @(if ($g.Result) { $g.Result.Mailboxes })) {
@@ -804,19 +924,143 @@ function Update-MmrGuiRows {
     }
     foreach ($list in $g.Controls.Mailboxes, $g.Controls.Preview) { [Windows.Data.CollectionViewSource]::GetDefaultView($list.ItemsSource).SortDescriptions.Clear() }
     $g.MailboxRows.ReplaceAll(@($rows))
-    $g.PreviewRows.ReplaceAll([MailboxMessageReportNative.PreviewRow]::Build($Preview))
+    $messages = [MailboxMessageReportNative.PreviewRow]::Build($Preview)
+    $g.PreviewRows.ReplaceAll($messages)
+    # The folder view: every mailbox read, its primary mailbox and archive, their folders; the messages in their folder.
+    $g.MailboxKeys = @{}
+    foreach ($m in @(if ($g.Result) { $g.Result.Mailboxes })) { $g.MailboxKeys["$($m.Address)|Primary"] = $m.Key; if ($m.ArchiveKey) { $g.MailboxKeys["$($m.Address)|Archive"] = $m.ArchiveKey } }
+    # Assigned directly: an 'if' would unroll a list of one mailbox into its node.
+    $roots = $null
+    if ($g.Result) { $roots = [MailboxMessageReportNative.FolderNode]::Build($g.Result.Mailboxes, $g.Result.Folders, $messages) }
+    $g.TreeRows.ReplaceAll($roots)
+    $g.FolderRows.ReplaceAll($null)
+    Show-MmrGuiMessage $null
     $many = @($rows).Count -gt 1
     foreach ($column in $g.Controls.Preview.View.Columns) { if ($column.Header -eq 'Mailbox') { $column.Width = if ($many) { 180 } else { 0 } } }
     Update-MmrGuiColumns
     $total = if ($g.Result) { [long]$g.Result.Counts.Messages } else { 0 }
     $shown = $g.PreviewRows.Count
-    $g.Controls.PreviewEmpty.Visibility = if ($shown) { 'Collapsed' } else { 'Visible' }
-    if (-not $shown -and $g.Result) { $g.Controls.PreviewEmpty.Text = 'No message: widen the period, check the subjects, or tick the archive.' }
-    $g.Controls.PreviewInfo.Text = if (-not $g.Result) { '' } elseif ($total -gt $shown) { "the first $('{0:N0}' -f $shown) of $('{0:N0}' -f $total) messages $($script:Dot) every message is in the report" } else { "$('{0:N0}' -f $total) message(s)" }
+    $perFolder = [int]$g.Configuration.PreviewPerFolder
+    $g.Controls.PreviewInfo.Text = if (-not $g.Result) { '' }
+    elseif ($total -gt $shown) { "$('{0:N0}' -f $shown) of $('{0:N0}' -f $total) messages$(if ($perFolder -gt 0) { ", the first $perFolder of each folder" }) $($script:Dot) every message is in the report" }
+    else { "$('{0:N0}' -f $total) message(s)" }
     if ($g.Result) { $n = $g.Result.Counts; $g.Controls.Counts.Text = '{0:N0} read {1} {2:N0} with an archive {1} {3:N0} not read' -f ($n.MailboxesRead + $n.MailboxesPartial), $script:Dot, $n.WithArchive, $n.MailboxesNotRead }
     else { $g.Controls.Counts.Text = '' }
+    # The first folder with messages, selected (its parents open).
+    if ($roots) {
+        $first = Select-MmrGuiFirstFolder $roots
+        # Selected in the tree once it is drawn; its messages shown now.
+        if ($first) { $first.IsSelected = $true; Show-MmrGuiFolder $first }
+    }
+    Update-MmrGuiView
 }
 
+function Select-MmrGuiFirstFolder {
+    <# The first folder of the tree with messages in the preview, its parents opened. #>
+    param($Nodes)
+    foreach ($node in @($Nodes)) {
+        if ($node.Kind -eq 'Folder' -and $node.Messages.Count) { return $node }
+        $found = Select-MmrGuiFirstFolder $node.Children
+        if ($found) { $node.IsExpanded = $true; return $found }
+    }
+    return $null
+}
+
+function Update-MmrGuiView {
+    <# Folders (tree, messages, reading pane) or List (every message of the preview), and the empty text. #>
+    $g = $script:Gui
+    if (-not $g) { return }
+    $c = $g.Controls
+    $any = $g.PreviewRows.Count -gt 0 -or $g.TreeRows.Count -gt 0
+    $folders = [bool]$c.ViewFolders.IsChecked
+    $c.FolderView.Visibility = if ($any -and $folders) { 'Visible' } else { 'Collapsed' }
+    $c.Preview.Visibility = if ($any -and -not $folders) { 'Visible' } else { 'Collapsed' }
+    $c.PreviewEmpty.Visibility = if ($any) { 'Collapsed' } else { 'Visible' }
+    if (-not $any -and $g.Result) { $c.PreviewEmpty.Text = 'No message: widen the period, check the subjects, or tick the archive.' }
+    Update-MmrGuiColumns
+}
+
+function Show-MmrGuiFolder {
+    <# The messages of the folder selected in the tree (the first ones of the folder: the preview), newest first. #>
+    param($Node)
+    $g = $script:Gui
+    if (-not $g) { return }
+    $node = if ($Node) { $Node } else { $g.Controls.FolderTree.SelectedItem }
+    if (-not $node -or $node.Kind -ne 'Folder') {
+        $g.FolderRows.ReplaceAll($null)
+        $g.Controls.FolderTitle.Text = if ($node) { "$($node.Name) $($script:Dot) $('{0:N0}' -f $node.Found) message(s) found $($script:Dot) select a folder" } else { '' }
+        Show-MmrGuiMessage $null
+        return
+    }
+    $g.FolderRows.ReplaceAll($node.Messages)
+    $shown = $node.Messages.Count
+    $g.Controls.FolderTitle.Text = if ($node.Found -gt $shown) { "$($node.Name) $($script:Dot) the first $shown of $('{0:N0}' -f $node.Found) messages" }
+    elseif ($node.Found) { "$($node.Name) $($script:Dot) $('{0:N0}' -f $node.Found) message(s)" }
+    elseif ($node.Status -eq 'Failed') { "$($node.Name) $($script:Dot) not read" }
+    else { "$($node.Name) $($script:Dot) no message$(if ($node.Items) { " found ($('{0:N0}' -f $node.Items) item(s) in the folder)" })" }
+    if ($shown) { $g.Controls.FolderMessages.SelectedIndex = 0 } else { Show-MmrGuiMessage $null }
+}
+
+function Show-MmrGuiMessage {
+    <# The reading pane: the message selected - who, to whom, when, where - and its content, read on demand. #>
+    param($Row)
+    $g = $script:Gui
+    if (-not $g) { return }
+    $c = $g.Controls
+    $g.Reading = $Row
+    if (-not $Row) {
+        $c.ReadingHeader.Visibility = 'Collapsed'; $c.ReadBody.Visibility = 'Collapsed'; $c.ReadEmpty.Visibility = 'Visible'
+        $c.ReadEmpty.Text = if ($g.FolderRows.Count) { 'Select a message to read it.' } else { 'Select a folder, then a message.' }
+        return
+    }
+    $dot = $script:Dot
+    $c.ReadingHeader.Visibility = 'Visible'; $c.ReadBody.Visibility = 'Visible'; $c.ReadEmpty.Visibility = 'Collapsed'
+    $c.ReadSubject.Text = $Row.Subject
+    $from = if ($Row.From -and $Row.FromDisplay -ne $Row.From) { "$($Row.FromDisplay) <$($Row.From)>" } else { $Row.FromDisplay }
+    if ($Row.Sender -and $Row.From -and $Row.Sender -ne $Row.From) { $from += "  (sent by $($Row.Sender))" }
+    $c.ReadFrom.Text = $from
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add("To: $(if ($Row.To) { $Row.To } else { '-' })")
+    if ($Row.Cc) { $lines.Add("Cc: $($Row.Cc)") }
+    if ($Row.Bcc) { $lines.Add("Bcc: $($Row.Bcc)") }
+    $lines.Add("Received $($Row.Received)$(if ($Row.Sent) { " $dot sent $($Row.Sent)" })")
+    $lines.Add("$($Row.LocationText) $dot $($Row.FolderPath) $dot $($Row.Mailbox)")
+    $extra = @(if ($Row.HasAttachments) { 'Attachments' }; if ($Row.Importance -and $Row.Importance -ne 'Normal') { "Importance $($Row.Importance)" }; if ($Row.Type -and $Row.Type -ne 'Message') { $Row.Type })
+    if ($extra.Count) { $lines.Add($extra -join " $dot ") }
+    if ($Row.InternetMessageId) { $lines.Add("Message ID: $($Row.InternetMessageId)") }
+    $c.ReadDetails.Text = $lines -join [Environment]::NewLine
+    $c.ReadBody.ScrollToHome()
+    if ($Row.BodyLoaded) { $c.ReadBody.Text = $Row.Body; return }
+    if (-not $g.Configuration.ReadBody) { $c.ReadBody.Text = 'The window does not read the content of the messages (Window.ReadBody).'; return }
+    if (-not $g.CanReadBody) { $c.ReadBody.Text = 'The content needs the application permission Mail.Read: this application reads the subject, the sender, the recipients and the dates only (Mail.ReadBasic.All).'; return }
+    $c.ReadBody.Text = 'Reading the content...'
+    $g.BodyWanted = $Row
+    $g.BodyTimer.Stop(); $g.BodyTimer.Start()
+}
+
+function Read-MmrGuiBody {
+    <# The content of the message waiting in the reading pane, read in the background runspace (its Graph connection). #>
+    $g = $script:Gui
+    if (-not $g -or -not $g.BodyWanted) { return }
+    # A run, or another content being read: tried again in a moment.
+    if ($g.Running -or $g.Job) { $g.BodyTimer.Start(); return }
+    $row = $g.BodyWanted
+    $g.BodyWanted = $null
+    $key = $g.MailboxKeys["$($row.Mailbox)|$($row.Location -replace ' \(RI\)$', '')"]
+    if (-not $key -or -not $row.ItemId) { $row.Body = 'The content cannot be read: mailbox or message not known.'; $row.BodyLoaded = $true; if ($g.Reading -eq $row) { $g.Controls.ReadBody.Text = $row.Body }; return }
+    $url = "$(Get-MmrUserPath $key)/messages/$([Uri]::EscapeDataString($row.ItemId))?`$select=body"
+    try {
+        Start-MmrGuiWork -Kind 'Body' -Arguments @{ Url = $url; Mailbox = $row.Mailbox; Where = "$($row.LocationText) $($row.FolderPath), message ID $($row.InternetMessageId)" } -Context @{ Row = $row } -OnDone {
+            param($outcome, $context)
+            $g = $script:Gui
+            $r = $context.Row
+            $r.Body = if ($outcome.Ok) { $outcome.Body } else { "The content could not be read: $($outcome.Error)" }
+            $r.BodyLoaded = [bool]$outcome.Ok
+            if ($g.Reading -eq $r) { $g.Controls.ReadBody.Text = $r.Body }
+        }
+    }
+    catch { $row.Body = "The content could not be read: $($_.Exception.Message)"; if ($g.Reading -eq $row) { $g.Controls.ReadBody.Text = $row.Body } }
+}
 function Start-MmrGuiRun {
     <# A run starts: inputs and buttons disabled, Stop enabled, a closing of the window stops the run first. #>
     param([string]$Text)
@@ -860,17 +1104,29 @@ param($Kind, $Arguments, $Shared)
 function Invoke-MmrGuiWork {
     <#
     .SYNOPSIS
-        The work of the window, in its background runspace (or inline): Search = connection, mailboxes, folders,
-        messages, report. Never throws: returns @{ Ok; Cancelled; Error; Result; Report; Preview }.
+        The work of the window, in its background runspace (or inline). Search = connection, mailboxes, folders,
+        messages, report. Body = the content of one message, as text, with the connection of the last search (each read
+        written to the log). Never throws: returns @{ Ok; Cancelled; Error; Result; Report; Preview; Body }.
     #>
     param([Parameter(Mandatory = $true)][string]$Kind, [hashtable]$Arguments = @{}, [Parameter(Mandatory = $true)][hashtable]$Shared)
     $script:Ui = $Shared
     $script:Quiet = $true
     if ($Shared.Log -and -not [object]::ReferenceEquals($script:LogWriter, $Shared.Log)) { $script:LogWriter = $Shared.Log }
     $a = $Arguments
-    $out = @{ Ok = $false; Cancelled = $false; Error = ''; Result = $null; Report = $null; Preview = $null }
+    $out = @{ Ok = $false; Cancelled = $false; Error = ''; Result = $null; Report = $null; Preview = $null; Body = '' }
     $partsPath = $null
     try {
+        if ($Kind -eq 'Body') {
+            if (-not $script:Graph) { throw 'Not connected: read the messages again.' }
+            $r = Invoke-MmrGraph -Path $a.Url -Headers @{ Prefer = 'outlook.body-content-type="text"' }
+            if ($r.Status -ne 200) { throw "$($r.Status) $($r.ErrorCode): $($r.ErrorMessage)" }
+            Write-MmrLog 'INFO' "Window: content of a message read - $($a.Mailbox), $($a.Where)"
+            $text = [string](Get-MmrProperty (Get-MmrProperty $r.Body 'body') 'content')
+            # Very long contents are cut: the reading pane is a preview.
+            $out.Body = if ($text.Length -gt 200000) { $text.Substring(0, 200000) + "`n`n[...] (cut at 200,000 characters)" } elseif ($text.Trim()) { $text.Trim() } else { '(no content)' }
+            $out.Ok = $true
+            return $out
+        }
         if ($Kind -ne 'Search') { throw "Unknown work of the window: $Kind" }
         $s = $a.Settings
         Initialize-MmrSteps -Total 5
@@ -882,11 +1138,12 @@ function Invoke-MmrGuiWork {
         $partsPath = Join-Path $runPath '.parts'
         $out.Result = Find-MmrMessages -Settings $s -Request $a.Request -PartsPath $partsPath
         Write-MmrNextStep 'Report' 'Report'
-        $report = Export-MmrReport -Result $out.Result -Directory $runPath -Prefix $s.ReportPrefix -Formats $a.Request.Formats -Layout $a.Request.Layout -Delimiter $s.CsvDelimiter -HtmlMaxMessages $s.HtmlMaxMessages -PreviewMessages $s.PreviewMessages -PartsPath $partsPath
+        $report = Export-MmrReport -Result $out.Result -Directory $runPath -Prefix $s.ReportPrefix -Formats $a.Request.Formats -Layout $a.Request.Layout -Delimiter $s.CsvDelimiter -HtmlMaxMessages $s.HtmlMaxMessages -PreviewMessages $s.PreviewMessages -PreviewPerFolder $s.PreviewPerFolder -PartsPath $partsPath
         Write-MmrItem Ok "Report: $($report.Directory)" -Icon File
         $csv = if ($report.Files.Contains('Messages')) { $report.Files.Messages } elseif ($report.Files.Contains('Mailboxes')) { $report.Files.Mailboxes } else { $null }
         $out.Report = @{ Directory = $report.Directory; Html = Get-MmrProperty $report.Files 'Html'; Csv = $csv }
         $out.Preview = $report.Preview
+        $out.CanReadBody = @($connection.Roles | Where-Object { $_ -in 'Mail.Read', 'Mail.ReadWrite' }).Count -gt 0
         $out.Ok = $true
     }
     catch [OperationCanceledException] { $out.Cancelled = $true }
@@ -936,6 +1193,9 @@ function Start-MmrGuiWork {
     #>
     param([Parameter(Mandatory = $true)][string]$Kind, [hashtable]$Arguments = @{}, [Parameter(Mandatory = $true)][scriptblock]$OnDone, [hashtable]$Context = @{})
     $g = $script:Gui
+    # The content of a message still being read: finished first (a second or so).
+    $until = [datetime]::UtcNow.AddSeconds(30)
+    while ($g.Job -and [datetime]::UtcNow -lt $until) { Invoke-MmrGuiPump; Start-Sleep -Milliseconds 30 }
     if ($script:GuiInline) {
         $outcome = Invoke-MmrGuiWork -Kind $Kind -Arguments $Arguments -Shared $g.Shared
         Receive-MmrGuiMessages
@@ -1039,7 +1299,8 @@ function Invoke-MmrGuiSearch {
     if ($cfg.AuthMode -eq 'ClientSecret' -and $c.Secret.SecurePassword.Length) { $secret = $c.Secret.SecurePassword.Copy() }
     Start-MmrGuiRun 'Reading...'
     $g.Result = $null; $g.LastReport = $null; $g.LastCsv = $null; $g.LastFolder = $null
-    $g.MailboxRows.ReplaceAll($null); $g.PreviewRows.ReplaceAll($null); $g.Controls.PreviewInfo.Text = ''
+    $g.MailboxRows.ReplaceAll($null); $g.PreviewRows.ReplaceAll($null); $g.TreeRows.ReplaceAll($null); $g.FolderRows.ReplaceAll($null); $g.Controls.PreviewInfo.Text = ''
+    $g.BodyWanted = $null; $g.BodyTimer.Stop(); Show-MmrGuiMessage $null; Update-MmrGuiView
     Write-MmrLog 'STEP' "Window search: $(@($request.Mailboxes).Count) mailbox(es), $($request.Location -join ', ')$(if ($request.RecoverableItems) { ', Recoverable Items' }), filter '$(Get-MmrMessageFilter -Start $request.Start -End $request.End -Subject $request.Subject)'"
     try {
         Start-MmrGuiWork -Kind 'Search' -Arguments @{ Settings = $cfg; Request = $request; Secret = $secret } -Context @{ Settings = $cfg; Secret = $secret } -OnDone {
@@ -1050,6 +1311,7 @@ function Invoke-MmrGuiSearch {
                     $g.Result = $outcome.Result
                     $g.Settings = $context.Settings
                     $g.LastFolder = $outcome.Report.Directory; $g.LastReport = $outcome.Report.Html; $g.LastCsv = $outcome.Report.Csv
+                    $g.CanReadBody = [bool]$outcome['CanReadBody']
                     $g.Controls.Footer.Text = "Report: $($outcome.Report.Directory)"
                     Update-MmrGuiRows -Preview $outcome.Preview
                     $n = $g.Result.Counts

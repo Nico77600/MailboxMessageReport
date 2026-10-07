@@ -9,17 +9,19 @@
     off screen (RenderTargetBitmap); the report is opened by Microsoft Edge headless.
 
     Writes docs\images\gui-search-light.png, gui-search-dark.png, gui-progress-light.png, report-overview.png,
-    report-dark.png, report-message.png, report-mailboxes.png. Needs an interactive session (WPF) and Microsoft Edge.
+    report-dark.png, report-message.png, report-mailboxes.png, gui-list-light.png. Needs an interactive session (WPF) and Microsoft Edge.
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.0.0
+    Version : 1.1.0
 #>
 #Requires -Version 7.4
 [CmdletBinding()]
 param([string]$Destination = (Join-Path $PSScriptRoot '..\docs\images'))
 
 $ErrorActionPreference = 'Stop'
+# The images of the English documentation: the texts of WPF (the empty date field) in English.
+[cultureinfo]::CurrentUICulture = [cultureinfo]::CurrentCulture = [cultureinfo]'en-US'
 $root = Split-Path $PSScriptRoot -Parent
 $Destination = [IO.Path]::GetFullPath($Destination)
 [void][IO.Directory]::CreateDirectory($Destination)
@@ -88,6 +90,8 @@ $module = Get-Module MailboxMessageReport
         & $add $u Primary '\Deletions' ([int](4 * $k) + 1) ([datetime]'2025-09-01') ([datetime]'2026-08-30') -Recoverable
         $null = Add-FakeFolder $u -Path '\Purges' -Recoverable
     }
+    $atlas = '<p>Bonjour Megan,</p><p>Voici le compte rendu du comité Atlas de ce matin.</p><p>1. Planning : la bascule est confirmée pour le 14 novembre, la répétition générale le 7.</p><p>2. Budget : le dépassement de 4 % est validé par la direction financière.</p><p>3. Risques : la migration des archives est le point d''attention ; Alex prépare le rapport des boîtes et de leurs archives d''ici vendredi.</p><p>Prochain comité le 21 octobre.</p><p>Bonne journée,<br>Lidia</p>'
+    $null = Add-FakeMessage "megan.bowen@$d" -Path '\Inbox' -Subject 'Projet Atlas : compte rendu du comité' -Received ([datetime]'2026-10-06T16:42:00') -From "lidia.holloway@$d" -FromName 'Lidia Holloway' -To "megan.bowen@$d", "alex.wilber@$d" -Cc "adele.vance@$d" -Attachments -Body $atlas
     & $add "lee.gu@$d" Primary '\Inbox' 20 ([datetime]'2025-11-01') ([datetime]'2026-10-06')
     & $add "lee.gu@$d" Primary '\Sent Items' 8 ([datetime]'2025-11-01') ([datetime]'2026-10-06') -Sent
     $null = Add-FakeFolder "lee.gu@$d" -Path '\Junk Email'
@@ -97,14 +101,14 @@ $module = Get-Module MailboxMessageReport
     $settings.CertificateThumbprint = '3F2A9C7B1E6D4A8F0B5C2E9D7A1F4B6C8E0D2A5B'; $settings.TimeZone = 'Europe/Paris'
     $settings.OutputPath = $Work; $settings.LogPath = Join-Path $Work 'logs'; $settings.ConfigPath = 'config\MailboxMessageReport.config.psd1'
     $token = New-FakeToken -TenantId $tenant
-    $script:Graph = @{ Settings = $settings; Token = $token; ExpiresUtc = [datetime]::UtcNow.AddHours(1); Certificate = $null; Secret = $null; Roles = @('Mail.ReadBasic.All', 'User.Read.All')
+    $script:Graph = @{ Settings = $settings; Token = $token; ExpiresUtc = [datetime]::UtcNow.AddHours(1); Certificate = $null; Secret = $null; Roles = @('Mail.Read', 'User.Read.All')
         CanReadMail = $true; CanReadUsers = $true; CanFindUsers = $true; TenantGuid = $tenant; AppName = 'Mailbox Message Report'; Renew = { @{ Token = $token; ExpiresUtc = [datetime]::UtcNow.AddHours(1) } } }
     function Connect-MmrGraph { param($Settings, $Secret) [pscustomobject]$script:Graph }
 
     $render = {
         param($Form, [string]$Path)
         $w = $Form.Form
-        $w.WindowStartupLocation = 'Manual'; $w.Left = -4000; $w.Top = 0; $w.Width = 1320; $w.Height = 900; $w.ShowInTaskbar = $false
+        $w.WindowStartupLocation = 'Manual'; $w.Left = -4000; $w.Top = 0; $w.Width = 1480; $w.Height = 940; $w.ShowInTaskbar = $false
         if (-not $w.IsVisible) { $w.Show() }
         [Windows.Threading.Dispatcher]::CurrentDispatcher.Invoke([Action] {}, [Windows.Threading.DispatcherPriority]::Background)
         $w.UpdateLayout()
@@ -125,12 +129,17 @@ $module = Get-Module MailboxMessageReport
         if ($Layout -eq 'PerMailbox') { $f.Controls.LayoutPerMailbox.IsChecked = $true }
         $f.Controls.ConnectionExpander.IsExpanded = $false
         Invoke-MmrGuiSearch
+        # The content of the message selected in the reading pane (read at once: no timer off screen).
+        Read-MmrGuiBody
         $f
     }
 
     $light = & $search 'Light'
     & $render $light (Join-Path $Destination 'gui-search-light.png')
     $reportFolder = $script:Gui.LastFolder
+    # The list view of the same preview.
+    $light.Controls.ViewList.IsChecked = $true
+    & $render $light (Join-Path $Destination 'gui-list-light.png')
     $light.Form.Close()
     $dark = & $search 'Dark'
     & $render $dark (Join-Path $Destination 'gui-search-dark.png')

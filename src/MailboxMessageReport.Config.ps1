@@ -18,7 +18,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.0.0
+    Version : 1.1.0
 #>
 
 # Section.Key of the configuration file -> key of the settings hashtable.
@@ -28,7 +28,7 @@ $script:ConfigSchema = [ordered]@{
     Search         = [ordered]@{ Locations = 'Locations'; RecoverableItems = 'RecoverableItems'; Recipients = 'Recipients'; PastDays = 'PastDays'; ExcludeFolders = 'ExcludeFolders'; MailboxFile = 'MailboxFile' }
     Graph          = [ordered]@{ MaxConcurrency = 'MaxConcurrency'; PageSize = 'PageSize'; SplitFolderItems = 'SplitFolderItems'; MaxRetries = 'MaxRetries'; TimeoutSeconds = 'TimeoutSeconds' }
     Report         = [ordered]@{ OutputPath = 'OutputPath'; FilePrefix = 'ReportPrefix'; Formats = 'ReportFormats'; Layout = 'ReportLayout'; HtmlMaxMessages = 'HtmlMaxMessages'; CsvDelimiter = 'CsvDelimiter'; TimeZone = 'TimeZone' }
-    Window         = [ordered]@{ PreviewMessages = 'PreviewMessages' }
+    Window         = [ordered]@{ PreviewMessages = 'PreviewMessages'; PreviewPerFolder = 'PreviewPerFolder'; ReadBody = 'ReadBody' }
     Logging        = [ordered]@{ Path = 'LogPath'; RetentionDays = 'LogRetentionDays' }
 }
 
@@ -64,7 +64,9 @@ function Get-MmrDefaultConfiguration {
         HtmlMaxMessages       = 20000
         CsvDelimiter          = ';'
         TimeZone              = ''
-        PreviewMessages       = 1000
+        PreviewMessages       = 5000
+        PreviewPerFolder      = 10
+        ReadBody              = $true
         LogPath               = '.\logs'
         LogRetentionDays      = 30
     }
@@ -153,7 +155,9 @@ function Test-MmrConfiguration {
     & $number 'HtmlMaxMessages' 'Report.HtmlMaxMessages' 0 200000
     if ([string]$c.CsvDelimiter -notin ';', ',', "`t") { [void]$problems.Add("Report.CsvDelimiter must be ';', ',' or a tab.") }
     if ([string]$c.TimeZone) { try { $null = Get-MmrTimeZone $c.TimeZone } catch { [void]$problems.Add("Report.TimeZone '$($c.TimeZone)' is not a time zone of this computer (for example Europe/Paris, or empty).") } }
-    & $number 'PreviewMessages' 'Window.PreviewMessages' 0 20000
+    & $number 'PreviewMessages' 'Window.PreviewMessages' 0 50000
+    & $number 'PreviewPerFolder' 'Window.PreviewPerFolder' 0 1000
+    if ($c.ReadBody -isnot [bool]) { [void]$problems.Add('Window.ReadBody must be $true or $false.') }
     & $number 'LogRetentionDays' 'Logging.RetentionDays' 1 365
 
     [pscustomobject]@{ IsValid = $problems.Count -eq 0; Problems = @($problems) }

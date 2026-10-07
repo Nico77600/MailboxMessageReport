@@ -2,6 +2,14 @@
 
 All notable changes to Mailbox Message Report. Versions: MAJOR.MINOR.PATCH (developer guide, appendix D).
 
+## 1.1.0 - 2026-10-07
+
+The preview of the window, like Outlook.
+
+- **Folder view**: the tree of each mailbox read — *Primary mailbox*, *Archive* and, when read, *Recoverable Items* under each — with the messages found per folder (a folder without any greyed, a folder not read in red); the messages of the folder selected (sender, subject, date, attachment), newest first; the first folder with messages selected after a search.
+- **Reading pane**: subject, sender, To, Cc, Bcc, received and sent dates, location and folder, Internet message ID, and the **content** of the message selected, read then from Microsoft Graph as text (`GET /users/{id}/messages/{id}?$select=body`, cut at 200,000 characters), one message at a time, 300 ms after the selection, kept for the rest of the session. It needs the application permission `Mail.Read` (with `Mail.ReadBasic.All` the pane says so and shows the rest); each content read is written to the log (mailbox, location, folder, Internet message ID); `Window.ReadBody = $false` turns it off. The reports never hold the content.
+- **Preview per folder**: the first 10 messages of each folder (`Window.PreviewPerFolder`, 0 to 1,000), 5,000 in all at most (`Window.PreviewMessages`, 0 to 50,000; 1,000 before); *List* shows the same messages in one sortable list.
+- Window 1480 × 940. 33 Pester tests (the first messages of each folder, the folder tree, the folder view and the reading pane); the simulated Exchange answers a message by its ID with its body as text.
 ## 1.0.0 - 2026-10-07
 
 First version.

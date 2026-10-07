@@ -3,7 +3,7 @@
 <#
     Mailbox Message Report - automated tests (Pester 6.1 or later).
     Author  : Nicolas Fabert
-    Version : 1.0.0
+    Version : 1.1.0
 
     Run:  .\Run-Tests.ps1      (or Invoke-Pester -Path .\tests -Output Detailed)
 
@@ -98,6 +98,9 @@ Describe 'Configuration and request' {
         $c.Recipients | Should -BeTrue
         $c.ReportLayout | Should -Be 'Global'
         $c.HtmlMaxMessages | Should -Be 20000
+        $c.PreviewMessages | Should -Be 5000
+        $c.PreviewPerFolder | Should -Be 10
+        $c.ReadBody | Should -BeTrue
     }
 
     It 'lists unknown sections, unknown keys and invalid values together' {
@@ -407,6 +410,45 @@ Describe 'Report' {
         (@(Read-TestCsv $report.Files.Folders) | Where-Object { $_.Path -eq '\Inbox\Projects\Alpha' }).Messages | Should -Be '1'
     }
 
+    It 'keeps for the window the first messages of each folder, within the limit of the preview' {
+        $s = Find-Test 'alice@contoso.test', 'bob@contoso.test'
+        $report = Export-Test $s -Preview 100
+        $report.Preview.Lines.Count | Should -Be 10
+        $s2 = Find-Test 'alice@contoso.test', 'bob@contoso.test'
+        $one = Export-MmrReport -Result $s2.Result -Directory $s2.Run -Formats Csv -PreviewMessages 100 -PreviewPerFolder 1 -PartsPath (Join-Path $s2.Run '.parts')
+        $rows = [MailboxMessageReportNative.PreviewRow]::Build($one.Preview)
+        # One per folder with messages: Inbox, Inbox\Projects\Alpha, Sent Items, archive Inbox, 2019\Q1, Junk Email; Bob's Inbox.
+        $rows.Count | Should -Be 7
+        @($rows | Group-Object FolderKey | Where-Object Count -gt 1).Count | Should -Be 0
+        $rows[0].Subject | Should -Be 'Weekly status'
+        $s3 = Find-Test 'alice@contoso.test', 'bob@contoso.test'
+        $capped = Export-MmrReport -Result $s3.Result -Directory $s3.Run -Formats Csv -PreviewMessages 3 -PreviewPerFolder 10 -PartsPath (Join-Path $s3.Run '.parts')
+        $capped.Preview.Lines.Count | Should -Be 3
+    }
+
+    It 'builds the folder tree of the window: mailboxes, primary mailbox, archive, Recoverable Items, the messages in their folder' {
+        $s = Find-Test 'alice@contoso.test', 'bob@contoso.test', 'carol@contoso.test' -More @{ RecoverableItems = $true }
+        $report = Export-Test $s -Preview 100
+        $rows = [MailboxMessageReportNative.PreviewRow]::Build($report.Preview)
+        $roots = [MailboxMessageReportNative.FolderNode]::Build($s.Result.Mailboxes, $s.Result.Folders, $rows)
+        ($roots | ForEach-Object Name) | Should -Be @('Alice Archive', 'Bob Primary', 'Carol OnPrem')
+        $roots[2].Dim | Should -BeTrue
+        $alice = $roots[0]
+        ($alice.Children | ForEach-Object Name) | Should -Be @('Primary mailbox', 'Archive')
+        $primary = $alice.Children[0]
+        ($primary.Children | ForEach-Object Name) | Should -Be @('Inbox', 'Sent Items', 'Recoverable Items')
+        $primary.Found | Should -Be 5
+        $inbox = $primary.Children[0]
+        $inbox.Found | Should -Be 2
+        $inbox.Messages.Count | Should -Be 2
+        $inbox.Children[0].Name | Should -Be 'Projects'
+        $inbox.Children[0].Dim | Should -BeTrue
+        $inbox.Children[0].Children[0].Messages[0].Subject | Should -Be 'Projet Alpha: kick-off'
+        ($primary.Children[2].Children | ForEach-Object Name) | Should -Be @('Deletions', 'Purges')
+        $primary.Children[2].Children[0].Messages[0].LocationText | Should -Be 'Primary mailbox - Recoverable Items'
+        $alice.Children[1].Found | Should -Be 5
+    }
+
     It 'keeps the first messages in the HTML report and says so; the CSV file holds them all' {
         $s = Find-Test 'alice@contoso.test'
         $report = Export-Test $s -HtmlMax 3
@@ -456,7 +498,7 @@ Describe 'Window' {
 
     It 'reads from the window: the mailboxes, a preview of the first messages, the report' {
         New-TestTenant
-        $s = New-TestSettings @{ PreviewMessages = 5 }
+        $s = New-TestSettings @{ PreviewMessages = 100; PreviewPerFolder = 1 }
         $null = Connect-Test $s
         $f = New-MmrForm -Configuration $s -Theme Light
         $c = $f.Controls
@@ -466,12 +508,46 @@ Describe 'Window' {
             & $script:Module { $script:GuiInline = $true; Invoke-MmrGuiSearch }
             $f.Mailboxes.Count | Should -Be 2
             $f.Mailboxes[0].GetType().Name | Should -Be 'MailboxRow'
-            $f.Preview.Count | Should -Be 5
-            $c.PreviewInfo.Text | Should -Match 'the first 5 of 10 messages'
+            $f.Preview.Count | Should -Be 7
+            $c.PreviewInfo.Text | Should -Match '^7 of 10 messages, the first 1 of each folder'
             $c.Status.Text | Should -Match '^10 message'
             ($f.Lines -join "`n") | Should -Match 'Report: '
             & $script:Module { $script:Gui.LastReport } | Should -Match 'MailboxMessageReport\.html$'
             $c.OpenReport.IsEnabled | Should -BeTrue
+        }
+        finally { & $script:Module { $script:GuiInline = $false }; $f.Form.Close() }
+    }
+
+    It 'shows the folders like Outlook: the tree, the messages of a folder, a message and its content' {
+        New-TestTenant
+        $null = Add-FakeMessage 'alice@contoso.test' -Path '\Inbox' -Subject 'Le contrat signé' -Received '2026-05-01T09:00:00' -To 'alice@contoso.test' -Body '<p>Bonjour Alice,</p><p>Voici le contrat signé.</p>'
+        $s = New-TestSettings
+        $f = New-MmrForm -Configuration $s -Theme Light
+        $c = $f.Controls
+        try {
+            # Mail.ReadBasic.All: the reading pane says the content needs Mail.Read.
+            $null = Connect-Test $s @('Mail.ReadBasic.All', 'User.Read.All')
+            $c.Mailbox.Text = 'alice@contoso.test'
+            & $script:Module { $script:GuiInline = $true; Invoke-MmrGuiSearch }
+            $c.FolderView.Visibility | Should -Be 'Visible'
+            $c.FolderTree.Items.Count | Should -Be 1
+            $c.FolderTitle.Text | Should -Match '^Inbox . 3 message'
+            $c.FolderMessages.Items.Count | Should -Be 3
+            $c.ReadSubject.Text | Should -Be 'Le contrat signé'
+            $c.ReadDetails.Text | Should -Match 'Primary mailbox . \\Inbox . alice@contoso.test'
+            $c.ReadBody.Text | Should -Match 'needs the application permission Mail.Read'
+            # Mail.Read: the content is read, as text.
+            $null = Connect-Test $s @('Mail.Read', 'User.Read.All')
+            & $script:Module { Invoke-MmrGuiSearch }
+            & $script:Module { $script:Gui.CanReadBody } | Should -BeTrue
+            $c.ReadBody.Text | Should -Be 'Reading the content...'
+            & $script:Module { Read-MmrGuiBody }
+            $c.ReadBody.Text | Should -Match '^Bonjour Alice,\r?\nVoici le contrat signé\.'
+            @($script:Fake.Calls | Where-Object { $_.Url -like '*/messages/*' -and $_.Url -like '*select=body*' }).Count | Should -Be 1
+            # The list view: every message of the preview.
+            $c.ViewList.IsChecked = $true
+            $c.Preview.Visibility | Should -Be 'Visible'
+            $c.FolderView.Visibility | Should -Be 'Collapsed'
         }
         finally { & $script:Module { $script:GuiInline = $false }; $f.Form.Close() }
     }

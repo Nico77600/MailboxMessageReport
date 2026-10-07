@@ -1,7 +1,7 @@
 <#
     Mailbox Message Report - simulated Exchange Online tenant behind Microsoft Graph, for the tests.
     Author  : Nicolas Fabert
-    Version : 1.0.0
+    Version : 1.1.0
 
     Start-MmrGraphSend (the only function of the tool that touches the network for Graph) is replaced by a mock that
     answers from this tenant: users, their primary mailbox and archive, folders, messages, $batch (v1.0 and beta). It
@@ -98,7 +98,7 @@ function Add-FakeMessage {
     param(
         [Parameter(Mandatory)][string]$Address, [ValidateSet('Primary', 'Archive')][string]$Location = 'Primary', [Parameter(Mandatory)][string]$Path, [switch]$Recoverable,
         [Parameter(Mandatory)][string]$Subject, [Parameter(Mandatory)][datetime]$Received, [string]$From = 'sender@fabrikam.test', [string]$FromName = 'Sender',
-        [string[]]$To = @(), [string[]]$Cc = @(), [string[]]$Bcc = @(), [switch]$Attachments, [string]$Type
+        [string[]]$To = @(), [string[]]$Cc = @(), [string[]]$Bcc = @(), [switch]$Attachments, [string]$Type, [string]$Body
     )
     $folder = Add-FakeFolder -Address $Address -Location $Location -Path $Path -Recoverable:$Recoverable
     $utc = [datetime]::SpecifyKind($Received, [DateTimeKind]::Utc)
@@ -109,6 +109,7 @@ function Add-FakeMessage {
         from = @{ emailAddress = @{ name = $FromName; address = $From } }; sender = @{ emailAddress = @{ name = $FromName; address = $From } }
         toRecipients = @(& $recipients $To); ccRecipients = @(& $recipients $Cc); bccRecipients = @(& $recipients $Bcc)
         internetMessageId = "<$([guid]::NewGuid().ToString('n'))@fabrikam.test>"; hasAttachments = [bool]$Attachments; importance = 'normal'; isRead = $true
+        body = @{ contentType = 'html'; content = $(if ($Body) { $Body } else { "<p>$Subject</p>" }) }
     }
     if ($Type) { $m['@odata.type'] = $Type }
     $folder.Messages.Add([pscustomobject]$m)
@@ -191,6 +192,15 @@ function Invoke-FakeGraphRequest {
         $user = $script:Fake.Users | Where-Object { $_.id -eq $segments[1] -or $_.mail -eq $segments[1].ToLowerInvariant() } | Select-Object -First 1
         if ($user -and $user.OnPremises) { return (& $error404 'MailboxNotEnabledForRESTAPI' 'The mailbox is either inactive, soft-deleted, or is hosted on-premise.') }
         return (& $error404)
+    }
+    # One message by its ID (the reading pane of the window): its body as text with Prefer outlook.body-content-type="text".
+    if ($segments.Count -eq 4 -and $segments[2] -eq 'messages') {
+        $msg = $store.Folders | ForEach-Object { $_.Messages } | Where-Object id -eq $segments[3] | Select-Object -First 1
+        if (-not $msg) { return @{ status = 404; body = @{ error = @{ code = 'ErrorItemNotFound'; message = 'The specified object was not found in the store.' } } } }
+        $content = [string]$msg.body.content
+        $type = 'html'
+        if ([string]$Headers['Prefer'] -match 'body-content-type="text"') { $content = ($content -replace '<br\s*/?>|</p>', "`r`n") -replace '<[^>]+>', ''; $type = 'text' }
+        return @{ status = 200; body = [ordered]@{ id = $msg.id; body = @{ contentType = $type; content = $content } } }
     }
     if ($segments[2] -ne 'mailFolders') { return @{ status = 400; body = @{ error = @{ code = 'BadRequest'; message = "Unknown path $path" } } } }
     $page = {

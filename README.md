@@ -42,11 +42,12 @@ The mail API of Microsoft Graph is documented for the primary mailbox only. But 
 </picture>
 
 - **The primary mailbox and the archive**: every mail folder of both, with its path (`\Inbox\Projects\Alpha`); **Recoverable Items** with `-IncludeRecoverableItems` (*Deletions*, *Purges*, *Versions*, *DiscoveryHolds*...). Each message says where it is: *Primary* or *Archive*, and *Recoverable Items* or not.
-- **What is read**: received and sent date and time, subject, sender, **To, Cc, Bcc**, Internet message ID, folder and path, attachments, importance, type. Never the body or the attachments.
+- **What is read**: received and sent date and time, subject, sender, **To, Cc, Bcc**, Internet message ID, folder and path, attachments, importance, type. The reports never hold the body or the attachments.
 - **Filtered by Exchange**: the period (`-Start`, `-End`, received date) and the subjects (`-Subject`, any of them) are a `$filter` of Graph, written the way Exchange accepts it (the date first, then `contains()`). Folders can be left out (`-ExcludeFolder '\Junk Email'`).
 - **One mailbox or thousands**: `-Mailbox` or a list (text or CSV); one report for all of them, **one per mailbox** (with a summary that links to each), or both.
 - **Large mailboxes**: 16 requests in flight, 4 at a time per mailbox (a primary mailbox and its archive are two mailboxes); a folder of more than 5,000 items is read in **slices of its dates**, side by side; each page is written to disk at once — the memory does not grow with the messages. The console and the window give the time left.
-- **Application permissions of Microsoft Graph** and a certificate: `Mail.ReadBasic.All` (never the body) and `User.Read.All`; no user account, no module.
+- **The window, like Outlook**: the search typed in the window, then the folders of each mailbox and of its archive in a tree, the first 10 messages of each folder, and a **reading pane** with the recipients, the dates, the folder and the content of the message selected (read on demand, with `Mail.Read`, logged).
+- **Application permissions of Microsoft Graph** and a certificate: `Mail.ReadBasic.All` and `User.Read.All` (`Mail.Read` only for the content in the reading pane); no user account, no module.
 
 ## The archive through Microsoft Graph
 
@@ -73,7 +74,7 @@ Every measurement is in the [developer guide, chapter 3 and appendix C](docs/Mai
 <table>
   <tr>
     <td width="50%" valign="top"><a href="docs/images/report-overview.png"><img alt="HTML report" src="docs/images/report-overview.png"></a><br><sub><b>HTML report</b> &middot; messages per location, every message searchable and sortable, the folders and the mailboxes</sub></td>
-    <td width="50%" valign="top"><a href="docs/images/gui-search-light.png"><img alt="The window after a search" src="docs/images/gui-search-light.png"></a><br><sub><b>Window</b> &middot; the mailboxes, the period, the subjects, where to read; the mailboxes read and a preview of the first messages</sub></td>
+    <td width="50%" valign="top"><a href="docs/images/gui-search-light.png"><img alt="The window after a search" src="docs/images/gui-search-light.png"></a><br><sub><b>Window</b> &middot; the search on the left; the folders of the mailboxes and of their archive like Outlook, the first messages of each folder and a reading pane</sub></td>
   </tr>
   <tr>
     <td width="50%" valign="top"><a href="docs/images/report-message.png"><img alt="A message in the report" src="docs/images/report-message.png"></a><br><sub><b>A message</b> &middot; every column: dates, sender, recipients, Internet message ID, folder, location</sub></td>
@@ -85,6 +86,12 @@ Every measurement is in the [developer guide, chapter 3 and appendix C](docs/Mai
 <summary><b>A run in progress</b> &middot; the step, the part done and the time left; the window keeps answering</summary>
 <br>
 <a href="docs/images/gui-progress-light.png"><img alt="The window during a run: Step 4/5, 61 %, about 1 min 10 s left" src="docs/images/gui-progress-light.png"></a>
+</details>
+
+<details>
+<summary><b>The preview as a list</b> &middot; every message of the preview, sortable</summary>
+<br>
+<a href="docs/images/gui-list-light.png"><img alt="The preview of the window as a list" src="docs/images/gui-list-light.png"></a>
 </details>
 
 Each run writes `MailboxMessageReport-Messages.csv` (every message), `-Mailboxes.csv`, `-Folders.csv`, `-Summary.json` and a self-contained HTML report (the first 20,000 messages), in a folder of its own; with `-Layout PerMailbox` or `Both`, the CSV and HTML report of each mailbox in `Mailboxes\`.
@@ -105,7 +112,7 @@ Each run writes `MailboxMessageReport-Messages.csv` (every message), `-Mailboxes
 Download `MailboxMessageReport-<version>.zip` from the [latest release](https://github.com/Nico77600/MailboxMessageReport/releases/latest), extract it (for example in `C:\Tools`) and unblock the files (command at the top of this page).
 
 ```powershell
-cd C:\Tools\MailboxMessageReport-1.0.0
+cd C:\Tools\MailboxMessageReport-1.1.0
 notepad .\config\MailboxMessageReport.config.psd1          # tenant, application, certificate thumbprint
 
 .\Invoke-MailboxMessageReport.ps1 -Gui                     # the window

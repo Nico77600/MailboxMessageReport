@@ -17,7 +17,7 @@
 //   PreviewRow  a message in the window; BulkCollection, the list bound to the window
 //
 // Author : Nicolas Fabert
-// Version: 1.0.0
+// Version: 1.1.0
 
 using System;
 using System.Collections;
@@ -27,6 +27,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -65,7 +66,7 @@ namespace MailboxMessageReportNative
 
     public static class Fast
     {
-        public const string Version = "1.0.0";
+        public const string Version = "1.1.0";
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
         /// <summary>A UTC date shown in a time zone: yyyy-MM-dd HH:mm (or HH:mm:ss, or yyyy-MM-dd). -PeriodEnd: 00:00 shows the day before.</summary>
@@ -367,6 +368,14 @@ namespace MailboxMessageReportNative
 
         /// <summary>The rows kept as one JSON array (safe inside a script block of the HTML report).</summary>
         public string ToJson() { return "[" + string.Join(",", Lines) + "]"; }
+
+        /// <summary>The rows kept by another buffer (the sample of one folder), as long as there is room.</summary>
+        public void AddFrom(RowBuffer other)
+        {
+            if (other == null) { return; }
+            foreach (var line in other.Lines) { if (Lines.Count >= Max) { break; } Lines.Add(line); }
+            Seen += other.Seen;
+        }
     }
 
     public static class Merge
@@ -433,32 +442,235 @@ namespace MailboxMessageReportNative
         }
     }
 
-    /// <summary>A message in the preview of the window.</summary>
-    public sealed class PreviewRow
+    /// <summary>A message in the preview of the window (the flat list, the folder view and its reading pane).</summary>
+    public sealed class PreviewRow : INotifyPropertyChanged
     {
+        string _body = "";
         public string Received { get; set; }
+        public string ReceivedShort { get; set; }
+        public string Sent { get; set; }
         public string Mailbox { get; set; }
+        public string MailboxName { get; set; }
         public string Location { get; set; }
+        public string LocationText { get; set; }
+        public bool RecoverableItems { get; set; }
         public string FolderPath { get; set; }
+        public string Folder { get; set; }
         public string Subject { get; set; }
         public string From { get; set; }
+        public string FromDisplay { get; set; }
+        public string Sender { get; set; }
         public string To { get; set; }
+        public string Cc { get; set; }
+        public string Bcc { get; set; }
+        public string InternetMessageId { get; set; }
+        public bool HasAttachments { get; set; }
+        public string AttachmentGlyph { get; set; }
+        public string Importance { get; set; }
+        public string Type { get; set; }
+        public string ItemId { get; set; }
+        /// <summary>The folder of the message in the tree: mailbox|location|recoverable|path.</summary>
+        public string FolderKey { get; set; }
+        /// <summary>The content of the message once read (reading pane), or why it is not.</summary>
+        public string Body { get { return _body; } set { if (_body != value) { _body = value ?? ""; Notify("Body"); } } }
+        public bool BodyLoaded { get; set; }
+        public event PropertyChangedEventHandler PropertyChanged;
+        void Notify(string name) { var h = PropertyChanged; if (h != null) { h(this, new PropertyChangedEventArgs(name)); } }
 
-        /// <summary>The rows of a buffer, for the list of the window.</summary>
+        public static string Key(string mailbox, string location, bool recoverable, string path)
+        {
+            return (mailbox ?? "").ToLowerInvariant() + "|" + location + "|" + (recoverable ? "1" : "0") + "|" + (path ?? "").ToLowerInvariant();
+        }
+
+        /// <summary>One row from the cells of a part file.</summary>
+        public static PreviewRow FromCells(string[] c)
+        {
+            var recoverable = c[3] == "Yes";
+            var fromName = c[10].Length > 0 ? c[10] : c[9];
+            return new PreviewRow
+            {
+                Mailbox = c[0], MailboxName = c[1], Location = c[2] + (recoverable ? " (RI)" : ""), RecoverableItems = recoverable,
+                LocationText = (c[2] == "Archive" ? "Archive" : "Primary mailbox") + (recoverable ? " - Recoverable Items" : ""),
+                FolderPath = c[4], Folder = c[5], Received = c[6], ReceivedShort = c[6].Length >= 16 ? c[6].Substring(0, 16) : c[6], Sent = c[7], Subject = c[8].Length > 0 ? c[8] : "(no subject)",
+                From = c[9].Length > 0 ? c[9] : c[10], FromDisplay = fromName.Length > 0 ? fromName : "(no sender)", Sender = c[11], To = c[12], Cc = c[13], Bcc = c[14],
+                InternetMessageId = c[15], HasAttachments = c[16] == "Yes", AttachmentGlyph = c[16] == "Yes" ? "\uE723" : "", Importance = c[17], Type = c[19], ItemId = c[21],
+                FolderKey = Key(c[0], c[2], recoverable, c[4])
+            };
+        }
+
+        /// <summary>The rows of a buffer, for the lists of the window.</summary>
         public static List<object> Build(RowBuffer buffer)
         {
             var rows = new List<object>();
             if (buffer == null) { return rows; }
-            foreach (var line in buffer.Lines)
-            {
-                var c = Fast.ParseRow(line);
-                var location = c[2] + (c[3] == "Yes" ? " (RI)" : "");
-                rows.Add(new PreviewRow { Mailbox = c[0], Location = location, FolderPath = c[4], Received = c[6], Subject = c[8], From = c[9].Length > 0 ? c[9] : c[10], To = c[12] });
-            }
+            foreach (var line in buffer.Lines) { rows.Add(FromCells(Fast.ParseRow(line))); }
             return rows;
         }
     }
 
+    /// <summary>A node of the folder tree of the window: a mailbox, a location (primary mailbox, archive, Recoverable Items) or a folder.</summary>
+    public sealed class FolderNode : INotifyPropertyChanged
+    {
+        bool _expanded;
+        bool _selected;
+        public FolderNode() { Children = new ObservableCollection<FolderNode>(); Messages = new List<object>(); }
+        public string Name { get; set; }
+        public string Glyph { get; set; }
+        /// <summary>Mailbox | Location | Folder.</summary>
+        public string Kind { get; set; }
+        public string Key { get; set; }
+        public long Found { get; set; }
+        public long Items { get; set; }
+        public string CountText { get; set; }
+        public string Status { get; set; }
+        public string Tip { get; set; }
+        public bool Dim { get; set; }
+        public ObservableCollection<FolderNode> Children { get; private set; }
+        /// <summary>The messages of the preview in this folder (a sample: Window.PreviewPerFolder at most).</summary>
+        public List<object> Messages { get; private set; }
+        public bool IsExpanded { get { return _expanded; } set { if (_expanded != value) { _expanded = value; Notify("IsExpanded"); } } }
+        public bool IsSelected { get { return _selected; } set { if (_selected != value) { _selected = value; Notify("IsSelected"); } } }
+        public event PropertyChangedEventHandler PropertyChanged;
+        void Notify(string name) { var h = PropertyChanged; if (h != null) { h(this, new PropertyChangedEventArgs(name)); } }
+
+        static string Text(object o, string name)
+        {
+            if (o == null) { return ""; }
+            var p = System.Management.Automation.PSObject.AsPSObject(o).Properties[name];
+            return p == null || p.Value == null ? "" : Convert.ToString(p.Value, CultureInfo.InvariantCulture);
+        }
+
+        static long Number(object o, string name)
+        {
+            long n;
+            return long.TryParse(Text(o, name), NumberStyles.Integer, CultureInfo.InvariantCulture, out n) ? n : 0;
+        }
+
+        static string Count(long found) { return found > 0 ? found.ToString("N0", CultureInfo.InvariantCulture) : ""; }
+
+        static string FolderGlyph(string path)
+        {
+            switch ((path ?? "").ToLowerInvariant())
+            {
+                case "\\inbox": return "\uE715";
+                case "\\sent items": return "\uE724";
+                case "\\drafts": return "\uE70F";
+                case "\\deleted items": return "\uE74D";
+                case "\\junk email": return "\uE7BA";
+                case "\\archive": return "\uE7B8";
+                default: return "\uE8B7";
+            }
+        }
+
+        /// <summary>
+        /// The tree of the window: one node per mailbox, then its primary mailbox and its archive, then their folders by
+        /// path (Recoverable Items in a node of its own); the messages of the preview attached to their folder.
+        /// </summary>
+        public static List<object> Build(object mailboxes, object folders, IEnumerable preview)
+        {
+            var roots = new List<object>();
+            var byMailbox = new Dictionary<string, FolderNode>(StringComparer.OrdinalIgnoreCase);
+            var nodes = new Dictionary<string, FolderNode>(StringComparer.OrdinalIgnoreCase);
+            foreach (var m in Each(mailboxes))
+            {
+                var address = Text(m, "Address");
+                var name = Text(m, "DisplayName");
+                var state = Text(m, "State");
+                var node = new FolderNode { Name = name.Length > 0 ? name : address, Glyph = "\uE77B", Kind = "Mailbox", Key = address.ToLowerInvariant(), Found = Number(m, "Messages"), Tip = address + (state != "Ok" ? " - " + Text(m, "Detail") : ""), Dim = state != "Ok", IsExpanded = true };
+                node.CountText = Count(node.Found);
+                byMailbox[address] = node;
+                roots.Add(node);
+            }
+            Func<string, string, bool, FolderNode> location = (address, loc, recoverable) =>
+            {
+                FolderNode mb;
+                if (!byMailbox.TryGetValue(address, out mb)) { return null; }
+                var key = address.ToLowerInvariant() + "|" + loc + "|" + (recoverable ? "1" : "0");
+                FolderNode node;
+                if (nodes.TryGetValue(key, out node)) { return node; }
+                if (recoverable)
+                {
+                    var parent = nodes.ContainsKey(address.ToLowerInvariant() + "|" + loc + "|0") ? nodes[address.ToLowerInvariant() + "|" + loc + "|0"] : null;
+                    if (parent == null) { return null; }
+                    node = new FolderNode { Name = "Recoverable Items", Glyph = "\uE74D", Kind = "Location", Key = key };
+                    parent.Children.Add(node);
+                }
+                else
+                {
+                    node = new FolderNode { Name = loc == "Archive" ? "Archive" : "Primary mailbox", Glyph = loc == "Archive" ? "\uE7B8" : "\uE715", Kind = "Location", Key = key, IsExpanded = true };
+                    mb.Children.Add(node);
+                }
+                nodes[key] = node;
+                return node;
+            };
+            // Primary and archive before Recoverable Items (which hang under them), whatever the order of the folders.
+            var list = Each(folders).ToList();
+            foreach (var f in list) { if (Text(f, "RecoverableItems") != "True") { location(Text(f, "Mailbox"), Text(f, "Location"), false); } }
+            foreach (var f in list)
+            {
+                var address = Text(f, "Mailbox");
+                var loc = Text(f, "Location");
+                var recoverable = Text(f, "RecoverableItems") == "True";
+                if (recoverable && location(address, loc, false) == null) { continue; }
+                var parent = location(address, loc, recoverable);
+                if (parent == null) { continue; }
+                var path = Text(f, "Path");
+                var parts = path.Trim('\\').Split('\\');
+                var start = recoverable && parts.Length > 0 && parts[0] == "Recoverable Items" ? 1 : 0;
+                var prefix = recoverable ? "\\Recoverable Items" : "";
+                for (int i = start; i < parts.Length; i++)
+                {
+                    prefix += "\\" + parts[i];
+                    var key = PreviewRow.Key(address, loc, recoverable, prefix);
+                    FolderNode node;
+                    if (!nodes.TryGetValue(key, out node))
+                    {
+                        node = new FolderNode { Name = parts[i], Glyph = recoverable ? "\uE8B7" : FolderGlyph(prefix), Kind = "Folder", Key = key, Dim = true, Tip = prefix };
+                        parent.Children.Add(node);
+                        nodes[key] = node;
+                    }
+                    parent = node;
+                }
+                var leaf = parent;
+                leaf.Found = Number(f, "Messages");
+                leaf.Items = Number(f, "TotalItems");
+                leaf.Status = Text(f, "Status");
+                leaf.CountText = Count(leaf.Found);
+                leaf.Dim = leaf.Found == 0;
+                var detail = Text(f, "Detail");
+                leaf.Tip = path + "  -  " + leaf.Items.ToString("N0", CultureInfo.InvariantCulture) + " item(s), " + leaf.Found.ToString("N0", CultureInfo.InvariantCulture) + " message(s) found" + (leaf.Status.Length > 0 ? ", " + leaf.Status : "") + (detail.Length > 0 ? " (" + detail + ")" : "");
+            }
+            // Messages found per location, and the messages of the preview in their folder.
+            foreach (var node in nodes.Values) { if (node.Kind == "Location") { node.Found = Sum(node); node.CountText = Count(node.Found); } }
+            if (preview != null)
+            {
+                foreach (var o in preview)
+                {
+                    var r = o as PreviewRow;
+                    FolderNode node;
+                    if (r != null && nodes.TryGetValue(r.FolderKey, out node)) { node.Messages.Add(r); }
+                }
+            }
+            return roots;
+        }
+
+        static long Sum(FolderNode n)
+        {
+            long s = 0;
+            foreach (var c in n.Children) { s += (c.Kind == "Folder" ? c.Found : 0) + Sum(c); }
+            return s;
+        }
+
+        static IEnumerable<object> Each(object o)
+        {
+            if (o == null) { yield break; }
+            var p = o as System.Management.Automation.PSObject;
+            var b = p != null ? p.BaseObject : o;
+            var e = b as IEnumerable;
+            if (e == null || b is string) { yield return o; yield break; }
+            foreach (var x in e) { if (x != null) { yield return x; } }
+        }
+    }
     /// <summary>A mailbox in the summary list of the window.</summary>
     public sealed class MailboxRow
     {

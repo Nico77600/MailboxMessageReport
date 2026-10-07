@@ -2,7 +2,7 @@
 #  Mailbox Message Report - configuration file
 #  --------------------------------------------------------------------------
 #  Author  : Nicolas Fabert
-#  Version : 1.0.0
+#  Version : 1.1.0
 #
 #  Read by Invoke-MailboxMessageReport.ps1 and by the window (-Gui). It is a PowerShell data file: text between
 #  quotes, $true / $false, numbers, @( ) for lists and @{ } for groups of settings. Lines starting with # are
@@ -93,10 +93,17 @@
     }
 
     # ---------------------------------------------------------------------
-    # The window (-Gui): a preview of the first messages of the report (the report holds them all).
+    # The window (-Gui): a preview of the messages - the first PreviewPerFolder messages of each folder (newest first),
+    # PreviewMessages in all at most - shown as a list, or as folders with a reading pane like Outlook. The report
+    # holds every message.
+    #   ReadBody: a message selected in the folder view shows its content, read then from Microsoft Graph as text.
+    #     It needs the application permission Mail.Read (Mail.ReadBasic.All does not give the body); each read is
+    #     written to the log. $false: the window never reads a body.
     # ---------------------------------------------------------------------
     Window = @{
-        PreviewMessages = 1000
+        PreviewMessages  = 5000
+        PreviewPerFolder = 10
+        ReadBody         = $true
     }
 
     # ---------------------------------------------------------------------

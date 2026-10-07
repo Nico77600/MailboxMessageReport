@@ -21,7 +21,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.0.0
+    Version : 1.1.0
 #>
 
 $script:ReportColumns = [ordered]@{
@@ -130,7 +130,10 @@ function Export-MmrReport {
     .PARAMETER Layout
         Global (one file for every mailbox), PerMailbox (one file per mailbox, under Mailboxes\) or Both.
     .PARAMETER PreviewMessages
-        How many messages to keep for the window (the first ones of the report).
+        How many messages to keep for the window at most.
+    .PARAMETER PreviewPerFolder
+        For the window: the first messages of each folder (newest first), up to PreviewMessages in all. 0: the first
+        PreviewMessages messages of the report.
     .OUTPUTS
         @{ Directory; Files (ordered: Html, Messages, Mailboxes, Folders, Summary); MailboxFiles; Preview (RowBuffer) }.
     #>
@@ -144,6 +147,7 @@ function Export-MmrReport {
         [ValidateSet(';', ',', "`t")][string]$Delimiter = ';',
         [int]$HtmlMaxMessages = 20000,
         [int]$PreviewMessages = 0,
+        [int]$PreviewPerFolder = 0,
         [string]$PartsPath
     )
 
@@ -180,10 +184,15 @@ function Export-MmrReport {
             try {
                 if ($own -and $csv) { $m.Csv = "Mailboxes/$Prefix-$name.csv"; $mailboxCsv = [MailboxMessageReportNative.CsvTarget]::new((Join-Path $sub "$Prefix-$name.csv"), [MailboxMessageReportNative.Columns]::Messages, $Delimiter) }
                 $targets = [MailboxMessageReportNative.CsvTarget[]]@(@($globalCsv, $mailboxCsv) | Where-Object { $_ })
-                $buffers = [MailboxMessageReportNative.RowBuffer[]]@(@($globalBuffer, $mailboxBuffer, $preview) | Where-Object { $_ })
+                $buffers = [MailboxMessageReportNative.RowBuffer[]]@(@($globalBuffer, $mailboxBuffer, $(if ($PreviewPerFolder -le 0) { $preview })) | Where-Object { $_ })
                 $folders = if ($byMailbox.ContainsKey($m.Address)) { $byMailbox[$m.Address] } else { @() }
                 foreach ($f in $folders) {
-                    if ($f.Messages -gt 0) { foreach ($part in @($f.Parts)) { [void][MailboxMessageReportNative.Merge]::AppendPart($part, $targets, $buffers) } }
+                    if ($f.Messages -le 0) { continue }
+                    # The window: the first messages of each folder (its sample joins the preview while there is room).
+                    $sample = if ($PreviewPerFolder -gt 0 -and $preview.Lines.Count -lt $preview.Max) { [MailboxMessageReportNative.RowBuffer]::new($PreviewPerFolder) } else { $null }
+                    $withSample = if ($sample) { [MailboxMessageReportNative.RowBuffer[]]@(@($buffers) + $sample) } else { $buffers }
+                    foreach ($part in @($f.Parts)) { [void][MailboxMessageReportNative.Merge]::AppendPart($part, $targets, $withSample) }
+                    if ($sample) { $preview.AddFrom($sample) }
                 }
             }
             finally { if ($mailboxCsv) { $mailboxCsv.Dispose(); $mailboxFiles++ } }

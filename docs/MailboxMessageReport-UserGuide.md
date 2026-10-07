@@ -1,7 +1,7 @@
 ---
 title: Mailbox Message Report
 subtitle: User guide
-version: 1.0.0
+version: 1.1.0
 author: Nicolas Fabert
 updated: 2026-10-07
 ---
@@ -135,8 +135,12 @@ Exchange reads the recipients (To, Cc, Bcc) of each message one by one: on a fol
 Mailboxes | Type the addresses (one per line), or *Load a list...* (text or CSV, with `ArchiveGuid` if you have it).
 Messages | The period (empty: no limit), the subjects (one per line), the recipients; *Where*: primary mailbox, archive, Recoverable Items, folders left out; the report: CSV, HTML, global or per mailbox.
 Read | *Read the messages*: the progress bar gives the step, the part done and the time left; *Stop* ends the run.
-Report | The mailboxes read, and a preview of the first 1,000 messages; *Open the report*, *Open the CSV*, *Open the folder*.
+Look | The mailboxes read, and a preview: the first 10 messages of each folder. *Folders*: the folders of the mailbox and of its archive like in Outlook; select a folder, then a message: the reading pane shows its recipients, its dates, where it is and its content. *List*: every message of the preview in one list.
+Report | *Open the report* (every message), *Open the CSV*, *Open the folder*.
 ```
+
+> [!NOTE]
+> The content of a message is read only when you select it, and only if the application has the permission `Mail.Read` (with `Mail.ReadBasic.All` the reading pane shows the rest). Each content read is written to the log. The reports never hold the content.
 
 <!-- icon: filter -->
 ## 3. Choose the messages
