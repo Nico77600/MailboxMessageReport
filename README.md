@@ -112,7 +112,7 @@ Each run writes `MailboxMessageReport-Messages.csv` (every message), `-Mailboxes
 Download `MailboxMessageReport-<version>.zip` from the [latest release](https://github.com/Nico77600/MailboxMessageReport/releases/latest), extract it (for example in `C:\Tools`) and unblock the files (command at the top of this page).
 
 ```powershell
-cd C:\Tools\MailboxMessageReport-1.1.0
+cd C:\Tools\MailboxMessageReport-1.1.1
 notepad .\config\MailboxMessageReport.config.psd1          # tenant, application, certificate thumbprint
 
 .\Invoke-MailboxMessageReport.ps1 -Gui                     # the window

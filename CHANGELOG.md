@@ -2,6 +2,15 @@
 
 All notable changes to Mailbox Message Report. Versions: MAJOR.MINOR.PATCH (developer guide, appendix D).
 
+## 1.1.1 - 2026-10-07
+
+Pages cut short by Exchange Online.
+
+- **A page cut short no longer stops the run.** Exchange Online sometimes answers a page of messages with a status 200 and a JSON that ends early (seen on a customer tenant on a slice of a large folder: `Exception calling "AddPage"... Expected depth to be zero at the end of the JSON payload`, and the run stopped without a report). The page is now asked again once; then with half as many messages, down to one (the next pages grow back to `Graph.PageSize`); then that one message without its sender and recipients; at last it is left out and the list goes on. Each step is logged (*Graph answered a page cut short*); a message left out or without sender and recipients is counted in the *Detail* of its folder and the run finishes with warnings (exit code 2). A list of folders cut short is asked again (`Graph.MaxRetries`), never kept incomplete.
+- **Large folders**: the newest slice has no end and the oldest no start (but those of the period asked): a message newer or older than the two dates read first is read as well (checked in the lab: `lt` or `ge` alone accepted with `$orderby`; 39,434 messages, each once).
+- **HTML report**: a notice when the browser cannot run its script (scripts turned off, an old engine) instead of an empty page.
+- The log of a search from the window gives the recipients asked, the formats and the layout of the report.
+- 35 Pester tests (a page cut short asked again smaller, a message Graph cannot return left out, larger pages cut short, a page and a list of folders cut once).
 ## 1.1.0 - 2026-10-07
 
 The preview of the window, like Outlook.

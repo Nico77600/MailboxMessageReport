@@ -1,7 +1,7 @@
 <#
     Mailbox Message Report - simulated Exchange Online tenant behind Microsoft Graph, for the tests.
     Author  : Nicolas Fabert
-    Version : 1.1.0
+    Version : 1.1.1
 
     Start-MmrGraphSend (the only function of the tool that touches the network for Graph) is replaced by a mock that
     answers from this tenant: users, their primary mailbox and archive, folders, messages, $batch (v1.0 and beta). It
@@ -14,7 +14,10 @@
         default), a deltaLink on the last page; recoverableitemsroot/childFolders: the folders of Recoverable Items;
       - messages: $filter receivedDateTime ge / lt and contains(subject,'...') (any case, or), $orderby
         receivedDateTime desc, $top / $skip and nextLink; contains() before the date, or with $orderby and no date:
-        400 InefficientFilter, as Exchange answers.
+        400 InefficientFilter, as Exchange answers;
+      - a page of messages cut short (200, the JSON ends after "value":[), as Exchange Online sometimes answers: a
+        message it cannot return (Add-FakeMessage -Cut Always, or Recipients: only when its sender or recipients are
+        asked), pages larger than CutAbove (a page that takes too long), or once (CutOnce).
     Every request is recorded (Calls), with the most requests in flight at once per mailbox (Open, MaxOpen).
 #>
 
@@ -27,6 +30,8 @@ function Reset-FakeTenant {
         Calls     = [Collections.Generic.List[object]]::new()
         Throttle  = @{}            # url pattern -> number of 429 still to answer
         Fail      = @{}            # url pattern -> @{ Status; Code }
+        CutOnce   = @{}            # url pattern -> number of pages still to cut short
+        CutAbove  = @{}            # url pattern -> largest $top answered whole
         Open      = @{}            # mailbox -> requests in flight
         MaxOpen   = @{}            # mailbox -> most requests in flight at once
         Next      = 0
@@ -98,7 +103,8 @@ function Add-FakeMessage {
     param(
         [Parameter(Mandatory)][string]$Address, [ValidateSet('Primary', 'Archive')][string]$Location = 'Primary', [Parameter(Mandatory)][string]$Path, [switch]$Recoverable,
         [Parameter(Mandatory)][string]$Subject, [Parameter(Mandatory)][datetime]$Received, [string]$From = 'sender@fabrikam.test', [string]$FromName = 'Sender',
-        [string[]]$To = @(), [string[]]$Cc = @(), [string[]]$Bcc = @(), [switch]$Attachments, [string]$Type, [string]$Body
+        [string[]]$To = @(), [string[]]$Cc = @(), [string[]]$Bcc = @(), [switch]$Attachments, [string]$Type, [string]$Body,
+        [ValidateSet('', 'Always', 'Recipients')][string]$Cut = ''
     )
     $folder = Add-FakeFolder -Address $Address -Location $Location -Path $Path -Recoverable:$Recoverable
     $utc = [datetime]::SpecifyKind($Received, [DateTimeKind]::Utc)
@@ -112,6 +118,8 @@ function Add-FakeMessage {
         body = @{ contentType = 'html'; content = $(if ($Body) { $Body } else { "<p>$Subject</p>" }) }
     }
     if ($Type) { $m['@odata.type'] = $Type }
+    # Never answered (not a property of Graph): a page holding this message is cut short.
+    if ($Cut) { $m['Cut'] = $Cut }
     $folder.Messages.Add([pscustomobject]$m)
     return [pscustomobject]$m
 }
@@ -220,7 +228,9 @@ function Invoke-FakeGraphRequest {
         $size = 10
         if ($Headers['Prefer'] -match 'odata\.maxpagesize=(\d+)') { $size = [int]$Matches[1] }
         $all = @($store.Folders | Where-Object { -not $_.Recoverable } | ForEach-Object { & $folderView $_ })
-        return @{ status = 200; body = (& $page $all $size $path) }
+        $cut = $false
+        foreach ($pattern in @($script:Fake.CutOnce.Keys)) { if ($decoded -like $pattern -and $script:Fake.CutOnce[$pattern] -gt 0) { $script:Fake.CutOnce[$pattern]--; $cut = $true } }
+        return @{ status = 200; body = (& $page $all $size $path); cut = $cut }
     }
     if ($segments.Count -eq 5 -and $segments[4] -eq 'childFolders') {
         $parentId = if ($segments[3] -eq 'recoverableitemsroot') { $store.RecoverableRoot } elseif ($segments[3] -eq 'msgfolderroot') { $store.Root } else { $segments[3] }
@@ -235,10 +245,19 @@ function Invoke-FakeGraphRequest {
         $date = $filter.IndexOf('receivedDateTime', [StringComparison]::OrdinalIgnoreCase)
         if ($contains -ge 0 -and ($date -lt 0 -or $contains -lt $date) -and $q.ContainsKey('$orderby')) { return @{ status = 400; body = @{ error = @{ code = 'InefficientFilter'; message = 'The restriction or sort order is too complex for this operation.' } } } }
         $items = @($folder.Messages | Where-Object { Test-FakeFilter $_ $filter } | Sort-Object { $_.receivedDateTime } -Descending:([string]$q['$orderby'] -notmatch ' asc$'))
-        # $select: the properties asked only (and id), as Graph answers.
         $select = @(([string]$q['$select']) -split ',' | Where-Object { $_ })
+        $top = [Math]::Max(1, [int]$q['$top'])
+        # A page cut short: once, larger than CutAbove, or holding a message Exchange cannot return.
+        $cut = $false
+        foreach ($pattern in @($script:Fake.CutOnce.Keys)) { if ($decoded -like $pattern -and $script:Fake.CutOnce[$pattern] -gt 0) { $script:Fake.CutOnce[$pattern]--; $cut = $true } }
+        foreach ($pattern in @($script:Fake.CutAbove.Keys)) { if ($decoded -like $pattern -and $top -gt $script:Fake.CutAbove[$pattern]) { $cut = $true } }
+        $sender = @($select | Where-Object { $_ -in 'from', 'sender', 'toRecipients', 'ccRecipients', 'bccRecipients' }).Count -gt 0
+        foreach ($m in @($items | Select-Object -Skip ([int]$q['$skip']) -First $top)) {
+            if ($m.PSObject.Properties['Cut'] -and ($m.Cut -eq 'Always' -or ($m.Cut -eq 'Recipients' -and $sender))) { $cut = $true }
+        }
+        # $select: the properties asked only (and id), as Graph answers.
         if ($select.Count) { $items = @($items | ForEach-Object { $o = $_; $view = [ordered]@{}; foreach ($p in $o.PSObject.Properties) { if ($p.Name -in $select -or $p.Name -in 'id', '@odata.type') { $view[$p.Name] = $p.Value } }; [pscustomobject]$view }) }
-        return @{ status = 200; body = (& $page $items ([Math]::Max(1, [int]$q['$top'])) $path) }
+        return @{ status = 200; body = (& $page $items $top $path); cut = $cut }
     }
     return @{ status = 400; body = @{ error = @{ code = 'BadRequest'; message = "Unknown request $Method $path" } } }
 }
@@ -262,7 +281,10 @@ function Invoke-FakeGraphHttp {
     }
     $r = Invoke-FakeGraphRequest -Method $Method -Url $Url -Body $null -Headers $(if ($Headers) { $Headers } else { @{} })
     $retry = if ($r.ContainsKey('headers') -and $r.headers['Retry-After']) { [double]$r.headers['Retry-After'] } else { 0 }
-    return @{ Status = $r.status; RetryAfter = $retry; Content = $(if ($r.ContainsKey('body')) { ConvertTo-FakeJson $r.body } else { '' }) }
+    $content = if ($r.ContainsKey('body')) { ConvertTo-FakeJson $r.body } else { '' }
+    # Cut short: the status and the start of the JSON, then nothing (as Exchange Online answers it).
+    if ($r['cut']) { $content = $content.Substring(0, $content.IndexOf('"value":[') + 9) }
+    return @{ Status = $r.status; RetryAfter = $retry; Content = $content }
 }
 
 function New-FakeToken {

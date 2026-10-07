@@ -24,7 +24,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.0
+    Version : 1.1.1
 #>
 
 $script:Gui = $null
@@ -1301,7 +1301,7 @@ function Invoke-MmrGuiSearch {
     $g.Result = $null; $g.LastReport = $null; $g.LastCsv = $null; $g.LastFolder = $null
     $g.MailboxRows.ReplaceAll($null); $g.PreviewRows.ReplaceAll($null); $g.TreeRows.ReplaceAll($null); $g.FolderRows.ReplaceAll($null); $g.Controls.PreviewInfo.Text = ''
     $g.BodyWanted = $null; $g.BodyTimer.Stop(); Show-MmrGuiMessage $null; Update-MmrGuiView
-    Write-MmrLog 'STEP' "Window search: $(@($request.Mailboxes).Count) mailbox(es), $($request.Location -join ', ')$(if ($request.RecoverableItems) { ', Recoverable Items' }), filter '$(Get-MmrMessageFilter -Start $request.Start -End $request.End -Subject $request.Subject)'"
+    Write-MmrLog 'STEP' "Window search: $(@($request.Mailboxes).Count) mailbox(es), $($request.Location -join ', ')$(if ($request.RecoverableItems) { ', Recoverable Items' }), filter '$(Get-MmrMessageFilter -Start $request.Start -End $request.End -Subject $request.Subject)', recipients $(if (Get-MmrProperty $request 'Recipients') { 'yes' } else { 'no' }), report $(@($request.Formats) -join '+') $($request.Layout)"
     try {
         Start-MmrGuiWork -Kind 'Search' -Arguments @{ Settings = $cfg; Request = $request; Secret = $secret } -Context @{ Settings = $cfg; Secret = $secret } -OnDone {
             param($outcome, $context)

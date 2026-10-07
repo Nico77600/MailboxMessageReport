@@ -22,7 +22,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.0
+    Version : 1.1.1
 #>
 
 $script:StepIndex = 0
@@ -126,6 +126,8 @@ function Get-MmrFolders {
     $onPage = {
         param($Job, [string]$Content)
         $body = ConvertFrom-MmrJson $Content
+        # A page cut short: asked again by Invoke-MmrGraphPaged (never a list of folders silently incomplete).
+        if ((Get-MmrProperty (Get-MmrProperty $body 'error') 'code') -eq 'InvalidJson') { throw [IO.InvalidDataException]::new('the JSON of the page is not complete') }
         foreach ($v in @(Get-MmrProperty $body 'value')) { if ($null -ne $v) { $raw[$Job.Id].Add($v) } }
         return [string](Get-MmrProperty $body '@odata.nextLink')
     }
@@ -272,7 +274,13 @@ function Get-MmrFolderSlices {
             if ($t -gt $cuts[-1] -and $t -lt $to) { $cuts.Add($t) }
         }
         $cuts.Add($to)
-        $list = for ($k = $cuts.Count - 2; $k -ge 0; $k--) { Get-MmrMessageFilter -Start $cuts[$k] -End $cuts[$k + 1] -Subject $Request.Subject }
+        # The newest and the oldest slice are open (up to the period asked): a message newer or older than the dates
+        # read first (arrived since, or one of them left out by Graph) is still read.
+        $list = for ($k = $cuts.Count - 2; $k -ge 0; $k--) {
+            $start = if ($k -eq 0) { $Request.Start } else { $cuts[$k] }
+            $end = if ($k -eq $cuts.Count - 2) { $Request.End } else { $cuts[$k + 1] }
+            Get-MmrMessageFilter -Start $start -End $end -Subject $Request.Subject
+        }
         $slices[$f.Id] = @($list)
     }
     return $slices
@@ -314,6 +322,9 @@ function Read-MmrMessages {
         $f.Parts = [Collections.Generic.List[string]]::new()
         $f.Slices = $filters.Count
         $f.SlicesDone = 0
+        # Messages Graph could not return (left out), or returned without sender and recipients (Step-MmrPagedCut).
+        $f | Add-Member -NotePropertyName Unreadable -NotePropertyValue 0 -Force
+        $f | Add-Member -NotePropertyName Incomplete -NotePropertyValue 0 -Force
         foreach ($sliceFilter in $filters) {
             $part = Join-Path $PartsPath ('{0:D6}.jsonl' -f $n)
             $f.Parts.Add($part)
@@ -343,6 +354,8 @@ function Read-MmrMessages {
         $f = $Job.Tag.Folder
         $w = $state.Writers[$Job.Id]
         if ($w) { $w.Dispose(); $state.Writers.Remove($Job.Id) }
+        $f.Unreadable += $Job.Skipped
+        $f.Incomplete += $Job.Partial
         if ($Status -ne 200) {
             $f.Status = 'Failed'
             $f.Detail = Get-MmrMailboxProblem $Status $Code $Message
@@ -352,7 +365,14 @@ function Read-MmrMessages {
         $state.Done += [Math]::Max(1, $f.TotalItems) / [double]$f.Slices
         $f.SlicesDone++
         if ($f.SlicesDone -ge $f.Slices) {
-            if ($f.Status -ne 'Failed') { $f.Status = 'Read'; $f.Detail = $(if ($f.Slices -gt 1) { "read in $($f.Slices) slices of its dates" } else { '' }) }
+            if ($f.Status -ne 'Failed') {
+                $f.Status = 'Read'
+                $f.Detail = @(
+                    if ($f.Slices -gt 1) { "read in $($f.Slices) slices of its dates" }
+                    if ($f.Unreadable) { "$($f.Unreadable) message(s) left out: Graph cannot return them" }
+                    if ($f.Incomplete) { "$($f.Incomplete) message(s) without sender and recipients: Graph cannot return them" }
+                ) -join " $($script:Dot) "
+            }
             $state.Folders++
         }
     }
@@ -369,7 +389,8 @@ function Read-MmrMessages {
     finally {
         foreach ($w in @($state.Writers.Values)) { $w.Dispose() }
         $state.Writers.Clear()
-    }    foreach ($f in $Folders) {
+    }
+    foreach ($f in $Folders) {
         $m = $byAddress[$f.Mailbox]
         if (-not $m) { continue }
         if ($f.Status -eq 'Read') {
@@ -506,6 +527,17 @@ function Find-MmrMessages {
     ) -join " $dot "
     Write-MmrItem Info $(if ($filterText) { $filterText } else { 'every message, whatever its date' }) -Icon Filter
     Read-MmrMessages -Folders $folders -Mailboxes $mailboxes -Request $Request -Settings $Settings -PartsPath $PartsPath
+    # Messages that Graph could not return, even one at a time: the run finishes with warnings.
+    $lost = @($folders | Where-Object { $_.PSObject.Properties['Unreadable'] -and $_.Unreadable -gt 0 })
+    $partial = @($folders | Where-Object { $_.PSObject.Properties['Incomplete'] -and $_.Incomplete -gt 0 })
+    if ($lost.Count) {
+        $warnings.Add(('{0:N0} message(s) left out: Graph cannot return them, even one at a time ({1}). See the Folders tab and the log.' -f ($lost | Measure-Object -Property Unreadable -Sum).Sum, (($lost | Select-Object -First 3 | ForEach-Object { "$($_.Mailbox) $($_.Location) $($_.Path)" }) -join ', ')))
+        Write-MmrItem Warn $warnings[-1] -Icon Folder
+    }
+    if ($partial.Count) {
+        $warnings.Add(('{0:N0} message(s) read without their sender and recipients: Graph cannot return them ({1}). See the Folders tab.' -f ($partial | Measure-Object -Property Incomplete -Sum).Sum, (($partial | Select-Object -First 3 | ForEach-Object { "$($_.Mailbox) $($_.Location) $($_.Path)" }) -join ', ')))
+        Write-MmrItem Warn $warnings[-1] -Icon Folder
+    }
     $result.Warnings = $warnings.ToArray()
     Update-MmrResultCounts $result
     $n = $result.Counts

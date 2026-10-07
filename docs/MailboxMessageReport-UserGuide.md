@@ -1,7 +1,7 @@
 ---
 title: Mailbox Message Report
 subtitle: User guide
-version: 1.1.0
+version: 1.1.1
 author: Nicolas Fabert
 updated: 2026-10-07
 ---
@@ -192,5 +192,7 @@ Each run writes a new folder under `reports\` (`MailboxMessageReport_20261007-10
 | *mailbox inactive, soft-deleted or on-premises* | Graph cannot open this mailbox (hybrid: the mailbox is on-premises). |
 | A folder of the archive *Failed* (*auxiliary archive*) | Auto-expanding archive: that folder is out of reach of the tool. |
 | *access denied* | The application is limited to some mailboxes (RBAC for Applications). |
+| *Graph answered a page cut short* in the log | Exchange Online ended a page early: the tool asks it again with fewer messages. *N message(s) left out* in the summary: Graph could not return them; the *Folders* tab says where. Many of them: `-SkipRecipients`. |
+| The HTML report shows no message | With `-Layout PerMailbox`, open the report of each mailbox (*Mailboxes* tab). Otherwise open the report in Microsoft Edge or Google Chrome (not in Internet Explorer mode, not in the preview of OneDrive); the CSV file holds every message. |
 
 Anything else: [developer guide, Appendix A — Troubleshooting](MailboxMessageReport-Guide.md#appendix-a---troubleshooting); every column of the report: [developer guide, chapter 4](MailboxMessageReport-Guide.md#4-what-is-read).

@@ -30,7 +30,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.0  (from Meeting Cleanup 1.2.3)
+    Version : 1.1.1  (from Meeting Cleanup 1.2.3)
     Part of : Mailbox Message Report (repository tool, not in the package)
 #>
 [CmdletBinding()]

@@ -3,7 +3,7 @@
 <#
     Mailbox Message Report - automated tests (Pester 6.1 or later).
     Author  : Nicolas Fabert
-    Version : 1.1.0
+    Version : 1.1.1
 
     Run:  .\Run-Tests.ps1      (or Invoke-Pester -Path .\tests -Output Detailed)
 
@@ -368,6 +368,51 @@ Describe 'Folders and messages' {
         $failed.Detail | Should -Match 'auxiliary archive'
         $r.Status | Should -Be 'Warning'
         ($r.Mailboxes[0]).Status | Should -Be 'Partial'
+    }
+
+    It 'asks a page cut short by Graph again, smaller, and leaves out only a message Graph cannot return' {
+        Reset-FakeTenant -TenantId $script:Tenant
+        $null = Add-FakeUser 'cut@contoso.test' -Archive
+        foreach ($j in 1..30) {
+            $cut = switch ($j) { 12 { 'Always' } 20 { 'Recipients' } default { '' } }
+            $null = Add-FakeMessage 'cut@contoso.test' -Location Archive -Path '\Inbox' -Subject "Message $j" -Received ([datetime]'2020-01-01').AddDays($j) -To 'cut@contoso.test' -Cut $cut
+        }
+        $s = Find-Test 'cut@contoso.test' -Overrides @{ PageSize = 10 }
+        $f = $s.Result.Folders | Where-Object { $_.Location -eq 'Archive' -and $_.Path -eq '\Inbox' }
+        $f.Status | Should -Be 'Read'
+        $f.Messages | Should -Be 29
+        $f.Unreadable | Should -Be 1
+        $f.Incomplete | Should -Be 1
+        $f.Detail | Should -Be "1 message(s) left out: Graph cannot return them $([char]0x00B7) 1 message(s) without sender and recipients: Graph cannot return them"
+        $s.Result.Status | Should -Be 'Warning'
+        @($s.Result.Warnings | Where-Object { $_ -match '^1 message\(s\) left out' -and $_ -match 'cut@contoso\.test Archive \\Inbox' }).Count | Should -Be 1
+        @($s.Result.Warnings | Where-Object { $_ -match '^1 message\(s\) read without their sender and recipients' }).Count | Should -Be 1
+        $rows = @(Read-TestCsv (Export-Test $s).Files.Messages)
+        $rows.Subject | Should -Be @(30..13 + 11..1 | ForEach-Object { "Message $_" })
+        ($rows | Where-Object Subject -eq 'Message 20').To | Should -Be ''
+        ($rows | Where-Object Subject -eq 'Message 20').From | Should -Be ''
+        ($rows | Where-Object Subject -eq 'Message 19').To | Should -Be 'cut@contoso.test'
+        # Every request after a cut asked the sender and the recipients again, but for the message that needed it.
+        @($script:Fake.Calls | Where-Object { $_.Url -like '*/messages?*' -and $_.Url -notmatch 'toRecipients' }).Count | Should -Be 2
+    }
+
+    It 'reads with smaller pages when Exchange cuts the large ones short, and asks again a page cut once' {
+        Reset-FakeTenant -TenantId $script:Tenant
+        $null = Add-FakeUser 'slow@contoso.test'
+        foreach ($j in 1..25) { $null = Add-FakeMessage 'slow@contoso.test' -Path '\Inbox' -Subject "Message $j" -Received ([datetime]'2021-01-01').AddHours($j) -To 'slow@contoso.test' }
+        $null = Add-FakeMessage 'slow@contoso.test' -Path '\Sent Items' -Subject 'Sent' -Received '2021-02-01' -To 'x@contoso.test'
+        $sent = (Get-FakeStore 'slow@contoso.test').Folders | Where-Object displayName -eq 'Sent Items'
+        $inbox = (Get-FakeStore 'slow@contoso.test').Folders | Where-Object displayName -eq 'Inbox'
+        $script:Fake.CutAbove["*$($inbox.id)/messages*"] = 4
+        $script:Fake.CutOnce["*$($sent.id)/messages*"] = 1
+        $script:Fake.CutOnce['*/mailFolders/delta*'] = 1
+        $s = Find-Test 'slow@contoso.test' -Overrides @{ PageSize = 10 }
+        $s.Result.Status | Should -Be 'Completed'
+        $s.Result.Counts.Messages | Should -Be 26
+        ($s.Result.Folders | Where-Object Path -eq '\Inbox').Detail | Should -Be ''
+        @($s.Result.Folders | Where-Object { $_.Unreadable -or $_.Incomplete }).Count | Should -Be 0
+        $rows = @(Read-TestCsv (Export-Test $s).Files.Messages | Where-Object Folder -eq 'Inbox')
+        $rows.Subject | Should -Be @(25..1 | ForEach-Object { "Message $_" })
     }
 
     It 'stops at once when the window asks it' {

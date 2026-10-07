@@ -26,7 +26,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.0
+    Version : 1.1.1
 #>
 
 $script:GraphRoot = 'https://graph.microsoft.com/v1.0'
@@ -500,7 +500,105 @@ function New-MmrPagedJob {
     <# One list to read page after page (Invoke-MmrGraphPaged). Url relative to /v1.0, or absolute; Tag: anything for the caller. #>
     param([Parameter(Mandatory = $true)][string]$Id, [Parameter(Mandatory = $true)][string]$Url, [hashtable]$Headers, $Tag)
     $u = if ($Url -match '^https://') { $Url } else { "$($script:GraphRoot)/$($Url.TrimStart('/'))" }
-    [pscustomobject]@{ Id = $Id; Url = $u; Headers = $Headers; Tag = $Tag; Mailbox = (Get-MmrMailboxKey ($u -replace '^https://graph\.microsoft\.com/(v1\.0|beta)', '')); Attempt = 0; NotBefore = [datetime]::MinValue; Pages = 0 }
+    # PageSize, Select: as asked, restored after a page cut short (Step-MmrPagedCut). Skipped, Partial: messages left
+    # out, or read without their sender and recipients, because Graph could not return them.
+    [pscustomobject]@{
+        Id = $Id; Url = $u; Headers = $Headers; Tag = $Tag; Mailbox = (Get-MmrMailboxKey ($u -replace '^https://graph\.microsoft\.com/(v1\.0|beta)', '')); Attempt = 0; NotBefore = [datetime]::MinValue; Pages = 0
+        PageSize = [int](Get-MmrUrlParameter $u 'top'); Select = [string](Get-MmrUrlParameter $u 'select'); Cuts = 0; CutTotal = 0; Reduced = $false; Skipped = 0; Partial = 0
+    }
+}
+
+function Get-MmrUrlParameter {
+    <# A parameter of the query of a URL ($top, %24top...), decoded; $null when absent. Name without the $. #>
+    param([string]$Url, [string]$Name)
+    $m = [regex]::Match($Url, "[?&](?:\`$|%24)$Name=([^&]*)", 'IgnoreCase')
+    if ($m.Success) { return [Uri]::UnescapeDataString($m.Groups[1].Value) }
+    return $null
+}
+
+function Set-MmrUrlParameter {
+    <# The URL with a parameter of its query set ($top, $skip, $select...), added when absent. Name without the $. #>
+    param([string]$Url, [string]$Name, [string]$Value)
+    $text = "`$$Name=$([Uri]::EscapeDataString($Value))"
+    $re = [regex]::new("([?&])(?:\`$|%24)$Name=[^&]*", 'IgnoreCase')
+    if ($re.IsMatch($Url)) { return $re.Replace($Url, '${1}' + $text.Replace('$', '$$'), 1) }
+    return "$Url$(if ($Url.Contains('?')) { '&' } else { '?' })$text"
+}
+
+function Get-MmrCutAnswer {
+    <# The reason when an exception says that a page was not complete JSON (the answer of Graph cut short), else $null. #>
+    param([Exception]$Exception)
+    for ($e = $Exception; $e; $e = $e.InnerException) {
+        if ($e -is [System.Text.Json.JsonException] -or $e -is [IO.InvalidDataException]) { return $e.Message }
+    }
+    return $null
+}
+
+function Step-MmrPagedCut {
+    <#
+    .SYNOPSIS
+        A page answered 200 whose JSON is cut short: what to ask next. Returns @{ Retry; Delay; Message }.
+    .DESCRIPTION
+        Exchange Online sometimes ends the answer of a page of messages early (the status line and the start of the
+        JSON are already sent): a page that took it too long (the recipients of meeting messages are read one by one),
+        or a message it cannot return. The page is asked again once; then with half as many messages, down to one;
+        then that one message without its sender and recipients; then it is left out ($skip) and the list goes on.
+        Every step is logged; Skipped and Partial count the messages lost or incomplete. Other lists (folders) are
+        asked again up to Graph.MaxRetries times.
+    #>
+    param([Parameter(Mandatory = $true)]$Job, [long]$Length, [string]$Reason, [int]$MaxRetries)
+    $Job.Cuts++
+    $Job.CutTotal++
+    # The reason (the error of the JSON reader) once per list: the next lines of the same list are shorter.
+    $what = "Graph answered a page cut short ($('{0:N0}' -f $Length) bytes$(if ($Job.CutTotal -eq 1) { ": $Reason" }))"
+    $log = { param([string]$Text) Write-MmrLog 'WARN' "$what - $Text - $($Job.Url)" }
+    if ($Job.CutTotal -gt 500) { return @{ Retry = $false; Message = "$what, $($Job.CutTotal) times" } }
+    if (-not ($Job.PageSize -gt 0 -and $Job.Url -match '/messages\?')) {
+        if ($Job.Cuts -le $MaxRetries) { & $log "asked again ($($Job.Cuts))"; return @{ Retry = $true; Delay = [Math]::Min(30, [Math]::Pow(2, $Job.Cuts - 1)) } }
+        return @{ Retry = $false; Message = "$what, $($Job.Cuts) times" }
+    }
+    # The first time on this list: perhaps once only.
+    if ($Job.CutTotal -eq 1) { & $log 'asked again'; return @{ Retry = $true; Delay = 1 } }
+    $top = [int](Get-MmrUrlParameter $Job.Url 'top')
+    if ($top -gt 1) {
+        $half = [int][Math]::Floor($top / 2)
+        $Job.Url = Set-MmrUrlParameter $Job.Url 'top' $half
+        & $log "asked again with $half message(s) a page"
+        return @{ Retry = $true; Delay = 0 }
+    }
+    $select = @(([string](Get-MmrUrlParameter $Job.Url 'select')) -split ',')
+    if (-not $Job.Reduced -and @($select | Where-Object { $_ -in 'from', 'sender', 'toRecipients', 'ccRecipients', 'bccRecipients' }).Count) {
+        $Job.Url = Set-MmrUrlParameter $Job.Url 'select' (@($select | Where-Object { $_ -notin 'from', 'sender', 'toRecipients', 'ccRecipients', 'bccRecipients' }) -join ',')
+        $Job.Reduced = $true
+        & $log 'one message: asked again without its sender and recipients'
+        return @{ Retry = $true; Delay = 0 }
+    }
+    if ($null -ne (Get-MmrUrlParameter $Job.Url 'skiptoken')) { return @{ Retry = $false; Message = "$what, even for one message" } }
+    $skip = [int](Get-MmrUrlParameter $Job.Url 'skip')
+    $Job.Url = Set-MmrUrlParameter (Set-MmrUrlParameter $Job.Url 'skip' ($skip + 1)) 'top' $Job.PageSize
+    if ($Job.Select) { $Job.Url = Set-MmrUrlParameter $Job.Url 'select' $Job.Select }
+    $Job.Reduced = $false
+    $Job.Cuts = 0
+    $Job.Skipped++
+    & $log "message $($skip + 1) of the list left out: Graph cannot return it"
+    return @{ Retry = $true; Delay = 0 }
+}
+
+function Get-MmrPagedNext {
+    <# After a page read on a list that had pages cut short: the next page with the $select asked, and a larger page again. #>
+    param([Parameter(Mandatory = $true)]$Job, [string]$Next)
+    if ($Job.Reduced) {
+        $Job.Partial++
+        Write-MmrLog 'WARN' "A message read without its sender and recipients (Graph cannot return them) - $($Job.Url)"
+        $Job.Reduced = $false
+        if ($Next -and $Job.Select) { $Next = Set-MmrUrlParameter $Next 'select' $Job.Select }
+    }
+    $Job.Cuts = 0
+    if ($Next -and $Job.PageSize -gt 0) {
+        $top = [int](Get-MmrUrlParameter $Next 'top')
+        if ($top -gt 0 -and $top -lt $Job.PageSize) { $Next = Set-MmrUrlParameter $Next 'top' ([Math]::Min($Job.PageSize, $top * 2)) }
+    }
+    return $Next
 }
 
 function Invoke-MmrGraphPaged {
@@ -608,15 +706,28 @@ function Invoke-MmrGraphPaged {
             $busy[$job.Mailbox] = $busy[$job.Mailbox] - 1
             $r = Complete-MmrGraphSend $call.Handle
             if ($r.Status -eq 200) {
-                $job.Attempt = 0
-                $job.Pages++
-                $pages++
-                $next = [string](& $OnPage $job $r.Content)
-                if ($next) {
-                    $job.Url = $next
-                    [void]$queues[$job.Mailbox].AddFirst($job)
+                # A page whose JSON is cut short is asked again, smaller (Step-MmrPagedCut): never the end of the run.
+                $next = $null
+                $cut = $null
+                try { $next = [string](& $OnPage $job $r.Content) }
+                catch { $cut = Get-MmrCutAnswer $_.Exception; if (-not $cut) { throw } }
+                if ($cut) {
+                    $retries++
+                    $step = Step-MmrPagedCut -Job $job -Length $r.Content.Length -Reason $cut -MaxRetries $maxRetries
+                    if ($step.Retry) { $job.NotBefore = [datetime]::UtcNow.AddSeconds($step.Delay); $delayed.Add($job) }
+                    else { & $OnDone $job 502 'CutAnswer' $step.Message }
                 }
-                else { & $OnDone $job 200 '' '' }
+                else {
+                    $job.Attempt = 0
+                    $job.Pages++
+                    $pages++
+                    if ($job.CutTotal) { $next = Get-MmrPagedNext -Job $job -Next $next }
+                    if ($next) {
+                        $job.Url = $next
+                        [void]$queues[$job.Mailbox].AddFirst($job)
+                    }
+                    else { & $OnDone $job 200 '' '' }
+                }
             }
             elseif (($r.Status -eq 401 -and $job.Attempt -lt 1) -or ($r.Status -in 0, 429, 500, 502, 503, 504 -and $job.Attempt -lt $maxRetries)) {
                 if ($r.Status -eq 401) { Update-MmrToken -Force; $delay = 0 }

@@ -1,7 +1,7 @@
 ---
 title: Mailbox Message Report
 subtitle: Developer guide
-version: 1.1.0
+version: 1.1.1
 author: Nicolas Fabert
 updated: 2026-10-07
 ---
@@ -83,7 +83,7 @@ file | Report | CSV, HTML, JSON
 | **Messages** | Each folder, page after page: `$select` the columns of the report, `$filter` the period and the subjects, `$orderby` the received date (newest first). A folder of more than 5,000 items is cut into slices of its dates, read side by side. Each page goes to the part file of its folder at once. |
 | **Report** | The part files are merged in the order of the report — mailbox, primary mailbox then archive, Recoverable Items last, folder path, newest first — into the CSV file(s), the HTML report(s) and `Summary.json`; then they are deleted. A daily log. |
 
-At most 16 requests are in flight, and 4 at a time for one mailbox (a limit of Exchange Online); a primary mailbox and its archive are two mailboxes. A 429 or 5xx answer is retried after its *Retry-After* delay.
+At most 16 requests are in flight, and 4 at a time for one mailbox (a limit of Exchange Online); a primary mailbox and its archive are two mailboxes. A 429 or 5xx answer is retried after its *Retry-After* delay. A page that Exchange Online cuts short (a 200 whose JSON ends early) is asked again, smaller (chapter 4).
 
 <!-- icon: archive -->
 ## 3. The archive through Microsoft Graph
@@ -134,7 +134,9 @@ Get-EXOMailbox -ResultSize Unlimited -Archive -Properties ArchiveGuid |
 > [!NOTE]
 > **Exchange and `contains()`.** Exchange refuses a filter on the subject before a condition on the date, and refuses `contains()` with `$orderby` alone (*InefficientFilter: The restriction or sort order is too complex for this operation*, measured). The tool always writes the date first; with subjects and no start date, the filter starts with `receivedDateTime ge 1900-01-01T00:00:00Z`.
 
-**A large folder.** A folder of more than `Graph.SplitFolderItems` items (5,000) is read in slices of its received dates: its oldest and newest message (of the filter) are read first, one message each; the period between them is cut in equal parts, one per 5,000 items, 16 at most; the slices are read side by side, 4 at a time for one mailbox, each page after page. Every message is read once (two slices meet on the same second, `lt` / `ge`), and the report keeps the order of the folder, newest first.
+**A large folder.** A folder of more than `Graph.SplitFolderItems` items (5,000) is read in slices of its received dates: its oldest and newest message (of the filter) are read first, one message each; the period between them is cut in equal parts, one per 5,000 items, 16 at most; the slices are read side by side, 4 at a time for one mailbox, each page after page. Every message is read once (two slices meet on the same second, `lt` / `ge`), and the report keeps the order of the folder, newest first. The newest slice has no end and the oldest no start (but those of the period asked): a message newer or older than the two read first is read as well.
+
+**A page cut short.** Exchange Online sometimes answers a page of messages with a status 200 and a JSON that stops early (seen on a customer tenant: 410 bytes, the end of `"value":[`, on a slice of a large folder): a page that took it too long (the recipients of meeting messages are read one by one), or a message it cannot return. The run goes on (version 1.0.0 stopped with *Expected depth to be zero at the end of the JSON payload*): the page is asked again once; then with half as many messages, down to one (the next pages grow back to `Graph.PageSize`); then that one message without its sender and recipients; at last it is left out (`$skip`) and the list goes on. Each step is in the log (*Graph answered a page cut short*); a message left out or without its sender and recipients is counted in the *Folders* tab (*Detail*) and the run finishes with warnings (exit code 2). A list of folders cut short is asked again up to `Graph.MaxRetries` times.
 
 **The columns of a message.**
 
@@ -413,7 +415,7 @@ pwsh -File .\tools\Measure-MailboxMessageReport.ps1 -Messages 500000 -Simulated
 .\Run-Tests.ps1      # Pester 6.1+, simulated tenant, no network
 ```
 
-`tests\MailboxMessageReport.FakeGraph.ps1` replaces the transport with a simulated Exchange Online that behaves like the lab: `settings/exchange` in beta (the archive ID, *MailboxNotEnabledForRESTAPI* for a mailbox on-premises), a mailbox opened by its user ID, any alias or its `MBX:` ID, the folder tree of `mailFolders/delta` in pages (`Prefer: odata.maxpagesize`), Recoverable Items, the messages filtered by date and subject with `contains()` refused before the date (*InefficientFilter*), `$select`, `$orderby` ascending or descending, `$top` / `$skip` and their nextLink, `$batch` in v1.0 and beta, one message by its ID with its body as text (`Prefer: outlook.body-content-type="text"`), 429 and failures on demand; every request is recorded with the most requests in flight per mailbox. The tests cover the configuration, the lists of mailboxes (text, CSV, `ArchiveGuid`), the request and the filter, the connection and the permissions, the mailboxes (alias, archive from Graph or from the list, on-premises, not a mailbox, twice under two aliases), the folders (paths, Recoverable Items, empty, left out), the messages (period, subjects, columns, time zone, order, pages, 4 per mailbox, slices of a large folder, without recipients, 429 retried, a folder that fails), *Stop*, the report (global, per mailbox, both, CSV safe for Excel, HTML safe, the first messages of the HTML, `Summary.json`, the part files deleted), the window (configuration, a search with its preview, the first messages of each folder, the folder tree, the folder view and the content of a message in the reading pane, values to fix), the time left and the command line.
+`tests\MailboxMessageReport.FakeGraph.ps1` replaces the transport with a simulated Exchange Online that behaves like the lab: `settings/exchange` in beta (the archive ID, *MailboxNotEnabledForRESTAPI* for a mailbox on-premises), a mailbox opened by its user ID, any alias or its `MBX:` ID, the folder tree of `mailFolders/delta` in pages (`Prefer: odata.maxpagesize`), Recoverable Items, the messages filtered by date and subject with `contains()` refused before the date (*InefficientFilter*), `$select`, `$orderby` ascending or descending, `$top` / `$skip` and their nextLink, pages cut short (a message Exchange cannot return, with or without its recipients; pages too large; once), `$batch` in v1.0 and beta, one message by its ID with its body as text (`Prefer: outlook.body-content-type="text"`), 429 and failures on demand; every request is recorded with the most requests in flight per mailbox. The tests cover the configuration, the lists of mailboxes (text, CSV, `ArchiveGuid`), the request and the filter, the connection and the permissions, the mailboxes (alias, archive from Graph or from the list, on-premises, not a mailbox, twice under two aliases), the folders (paths, Recoverable Items, empty, left out), the messages (period, subjects, columns, time zone, order, pages, 4 per mailbox, slices of a large folder, without recipients, 429 retried, a folder that fails, pages cut short asked again smaller and a message Graph cannot return left out), *Stop*, the report (global, per mailbox, both, CSV safe for Excel, HTML safe, the first messages of the HTML, `Summary.json`, the part files deleted), the window (configuration, a search with its preview, the first messages of each folder, the folder tree, the folder view and the content of a message in the reading pane, values to fix), the time left and the command line.
 
 <!-- icon: book -->
 ## 15. Documentation and package
@@ -452,6 +454,8 @@ A link from one guide to the other is written with its GitHub anchor (`MailboxMe
 | A mailbox or a folder *access denied* | RBAC for Applications scope or application access policy (chapter 5). |
 | A folder of the archive *Failed* with *auxiliary archive* | Auto-expanding archive: out of scope (chapter 3). |
 | *InefficientFilter* in the log | Should not happen (the filter always starts with the date): send the log line. |
+| *Graph answered a page cut short* in the log | Exchange Online ended a page early: the tool asks it again with fewer messages (chapter 4). Many of them on a folder of meeting messages: `-SkipRecipients`, or `Graph.PageSize = 100`. *N message(s) left out* in the summary: Graph could not return these messages even one at a time; the log gives their position in the folder. With 1.0.0 the run stopped with *Exception calling "AddPage"... Expected depth to be zero at the end of the JSON payload*: use 1.1.1 or later. |
+| The HTML report shows no message | With `-Layout PerMailbox` the messages are in the report of each mailbox (*Mailboxes* tab, `Mailboxes\`). Otherwise the browser does not run the script of the report (a notice says so since 1.1.1): open it in Microsoft Edge or Google Chrome, not in Internet Explorer mode or the preview of OneDrive / SharePoint; the CSV files hold every message. |
 | A run takes long on one folder | A large folder of meeting messages with recipients: `-SkipRecipients`, or leave the folder out (`-ExcludeFolder '\Deleted Items'`). The progress line gives the time left. |
 | *Mailbox Message Report 1.0.0 is already loaded in this PowerShell session* | The compiled part of another version is loaded in this process (it cannot be unloaded): open a new PowerShell window. |
 | *Cannot add type* · *... is not allowed in this language mode* when the module loads | PowerShell runs in *Constrained Language* mode (AppLocker or App Control policy): the tool needs *Full Language* (a folder allowed by the policy, or signed scripts). |
@@ -490,6 +494,8 @@ A lab tenant, Microsoft Graph v1.0 and beta, application token, 2026-10-07. Test
 | A room mailbox, *Deleted Items* of 39,419 meeting messages: a page of 1,000 with `$select` subject; + dates and message ID; + from and sender; + to, cc, bcc; every column; every column, 250 | 0.4; 0.4; 0.5; **28.5**; 31.2; 6.4 s |
 | Tool on it, `-SkipRecipients` (8 slices, pages of 1,000) | 39,434 messages, each once, in date order, 42.5 s |
 | Tool on it, with the recipients (8 slices, pages of 1,000) | 39,434 messages, each once, To filled for 39,425 (the others had none), 7 min 27 s |
+| `$filter=receivedDateTime lt ...` alone, or `ge ...` alone, `$orderby=receivedDateTime desc` (the open slices, 1.1.1) | 200, sorted; the same 39,434 messages, each once, with the open slices (`-SkipRecipients`, 36.9 s) |
+| nextLink of a page of messages | `%24top=N&%24skip=M`; `$skip` honoured with `$filter` and `$orderby` (items 3 to 5 for `$top=3&$skip=2`) |
 | Window, 3 mailboxes, subjects *Contrat Alpha* or *Facture*, Recoverable Items (`Mail.Read`) | 963 messages; folder view: 150 messages in the preview (the first 10 of each folder), the first folder with messages selected, the content of its first message read as text in the reading pane |
 
 <!-- icon: tag -->

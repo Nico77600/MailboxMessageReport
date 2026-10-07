@@ -2,7 +2,7 @@
 <!--
     Mailbox Message Report - HTML template
     Author  : Nicolas Fabert
-    Version : 1.1.0
+    Version : 1.1.1
     Export-MmrReport (src\MailboxMessageReport.Report.ps1) copies this file and replaces five markers, each exactly once:
     TITLE (text), and SUMMARY, MAILBOXES, FOLDERS, MESSAGES (JSON, in the script blocks at the end of the body).
     MESSAGES is a list of arrays, one per message, in the order of SUMMARY.Columns (the columns of the CSV file); it
@@ -114,6 +114,7 @@ footer { color:var(--cp-text-muted); font-size:12px; text-align:center; margin-t
 @media print { body { background:#fff; padding:0; } .controls, .tabs, .more { display:none; } .scroll { max-height:none; overflow:visible; } }
 </style></head>
 <body>
+<noscript><div class="notice" style="margin:16px">This report needs JavaScript, which is turned off in this browser: open it in Microsoft Edge or Google Chrome with scripts allowed. The CSV files hold every message.</div></noscript>
 <header>
   <div class="hero-top">
     <div>
@@ -169,6 +170,16 @@ footer { color:var(--cp-text-muted); font-size:12px; text-align:center; margin-t
 <script type="application/json" id="data-mailboxes">{{MAILBOXES_JSON}}</script>
 <script type="application/json" id="data-folders">{{FOLDERS_JSON}}</script>
 <script type="application/json" id="data-messages">{{MESSAGES_JSON}}</script>
+<script>
+// A browser that cannot run the report (an old engine, a script blocked) says so instead of an empty page.
+window.addEventListener("error", e => {
+  const d = document.createElement("div");
+  d.className = "notice";
+  d.style.margin = "16px";
+  d.textContent = `This report could not be shown in this browser (${e.message || "script error"}). Open it in Microsoft Edge or Google Chrome; the CSV files hold every message.`;
+  document.body.prepend(d);
+});
+</script>
 <script>
 (() => {
   const read = id => JSON.parse(document.getElementById(id).textContent || "null");
