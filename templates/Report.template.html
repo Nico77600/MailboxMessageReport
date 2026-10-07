@@ -1,0 +1,361 @@
+<!doctype html>
+<!--
+    Mailbox Message Report - HTML template
+    Author  : Nicolas Fabert
+    Version : 1.0.0
+    Export-MmrReport (src\MailboxMessageReport.Report.ps1) copies this file and replaces five markers, each exactly once:
+    TITLE (text), and SUMMARY, MAILBOXES, FOLDERS, MESSAGES (JSON, in the script blocks at the end of the body).
+    MESSAGES is a list of arrays, one per message, in the order of SUMMARY.Columns (the columns of the CSV file); it
+    holds the first Report.HtmlMaxMessages messages (SUMMARY.MessagesShown of SUMMARY.MessagesTotal). The table shows
+    them a page at a time: a large report opens at once.
+    Everything else is static: texts, colours and tabs can be changed here. Same design system as Meeting Cleanup,
+    EAS OAuth Mailbox and Message Trace Report (--cp-* variables).
+-->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<script>
+  (() => {
+    const param = new URLSearchParams(window.location.search).get("scoutTheme");
+    const theme = param === "light" || param === "dark" ? param : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", theme);
+    // scoutFocus=tables (documentation images): the tabs and their tables only.
+    if (new URLSearchParams(window.location.search).get("scoutFocus") === "tables") document.documentElement.setAttribute("data-focus", "tables");
+  })();
+</script>
+<style>
+:root {
+  color-scheme: light;
+  --cp-bg: #f7f4ef; --cp-bg-elevated: #fcfbf8; --cp-surface: #ffffff; --cp-surface-soft: #f5f5f5;
+  --cp-border: #dedede; --cp-border-strong: #919191; --cp-text: #242424; --cp-text-muted: #5c5c5c; --cp-text-soft: #6f6f6f;
+  --cp-accent: #b11f4b; --cp-accent-hover: #9a1a41; --cp-accent-soft: rgba(177, 31, 75, 0.08); --cp-accent-fg: #ffffff;
+  --cp-success: #16a34a; --cp-danger: #dc2626; --cp-warning: #d97706; --cp-link: #0078d4; --cp-info: #2563eb;
+  --cp-success-soft: rgba(22,163,74,0.12); --cp-danger-soft: rgba(220,38,38,0.12); --cp-warning-soft: rgba(217,119,6,0.14); --cp-neutral-soft: rgba(120,120,120,0.12); --cp-info-soft: rgba(37,99,235,0.10);
+  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12); --cp-highlight: rgba(177, 31, 75, 0.12);
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --cp-bg: #3d3b3a; --cp-bg-elevated: #343231; --cp-surface: #292929; --cp-surface-soft: #2e2e2e;
+  --cp-border: #474747; --cp-border-strong: #5f5f5f; --cp-text: #dedede; --cp-text-muted: #919191; --cp-text-soft: #b0b0b0;
+  --cp-accent: #fd8ea1; --cp-accent-hover: #fb7b91; --cp-accent-soft: rgba(253, 142, 161, 0.14); --cp-accent-fg: #1a1a1a;
+  --cp-success: #4ade80; --cp-danger: #f87171; --cp-warning: #fbbf24; --cp-link: #4da6ff; --cp-info: #60a5fa;
+  --cp-success-soft: rgba(74,222,128,0.14); --cp-danger-soft: rgba(248,113,113,0.16); --cp-warning-soft: rgba(251,191,36,0.16); --cp-neutral-soft: rgba(200,200,200,0.12); --cp-info-soft: rgba(96,165,250,0.14);
+  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32); --cp-highlight: rgba(253, 142, 161, 0.12);
+}
+* { box-sizing: border-box; }
+body { margin:0; padding:28px 32px; background:var(--cp-bg); color:var(--cp-text); font:14px "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif; }
+h1 { font-size:32px; font-weight:650; letter-spacing:-0.025em; margin:8px 0 12px; }
+h2 { font-size:18px; font-weight:600; margin:0 0 12px; }
+p { line-height:1.5; margin:8px 0; } .muted, small { color:var(--cp-text-muted); }
+a { color:var(--cp-link); } [hidden] { display:none !important; }
+header { position:relative; overflow:hidden; border:1px solid var(--cp-border); border-top:4px solid var(--cp-accent); border-radius:16px; padding:24px; margin-bottom:20px; background:linear-gradient(125deg,var(--cp-surface) 35%,var(--cp-accent-soft)); }
+header::before { content:""; position:absolute; width:280px; height:280px; right:-100px; top:-160px; border:40px solid var(--cp-highlight); border-radius:50%; pointer-events:none; }
+.hero-top { position:relative; display:flex; justify-content:space-between; gap:24px; align-items:flex-start; flex-wrap:wrap; }
+#origin { color:var(--cp-accent); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; font-weight:700; }
+.subtitle { color:var(--cp-text-muted); max-width:760px; }
+.period { min-width:300px; padding:12px 16px; border:1px solid var(--cp-border); border-radius:0.625rem; background:var(--cp-surface); }
+.label { font-size:11px; color:var(--cp-accent); font-weight:700; letter-spacing:0.08em; text-transform:uppercase; display:block; margin-bottom:8px; }
+#period { font-size:13px; line-height:1.6; font-variant-numeric:tabular-nums; }
+.metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; margin:20px 0 16px; position:relative; }
+.tile { position:relative; overflow:hidden; padding:18px 20px; border:1px solid var(--cp-border); border-radius:16px; background:var(--cp-surface); transition:transform 160ms ease,border-color 160ms ease; }
+.tile:hover { transform:translateY(-3px); border-color:var(--cp-accent); }
+.tile::after { content:""; position:absolute; width:80px; height:80px; right:-28px; bottom:-32px; border:14px solid var(--cp-highlight); border-radius:50%; pointer-events:none; }
+.tile-primary { background:linear-gradient(125deg,var(--cp-accent-hover),var(--cp-accent)); border-color:var(--cp-accent); color:var(--cp-accent-fg); }
+.tile-tinted { background:linear-gradient(135deg,var(--cp-surface),var(--cp-accent-soft)); }
+.tile-label { display:block; font-size:12px; font-weight:600; margin-bottom:12px; }
+.tile strong { display:block; font-size:32px; font-weight:650; letter-spacing:-0.025em; font-variant-numeric:tabular-nums; }
+.tile small { display:block; margin-top:8px; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .tile-primary small { color:var(--cp-accent-fg); }
+.statusbar { position:relative; display:flex; height:8px; border-radius:8px; overflow:hidden; background:var(--cp-border); }
+.statusbar span { display:block; height:100%; }
+.legend { position:relative; display:flex; flex-wrap:wrap; gap:16px; font-size:11px; color:var(--cp-text-muted); margin-top:8px; }
+.legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+section.block { background:var(--cp-surface); border:1px solid var(--cp-border); border-radius:16px; padding:20px; margin-bottom:20px; }
+.caption { font-size:12px; color:var(--cp-text-muted); margin:0 0 12px; }
+.scope { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+.scope-card { padding:12px 14px; border:1px solid var(--cp-border); border-radius:12px; background:linear-gradient(160deg,var(--cp-surface) 55%,var(--cp-surface-soft)); min-width:0; }
+.scope-card span { display:block; color:var(--cp-text-muted); font-size:11px; text-transform:uppercase; letter-spacing:0.06em; }
+.scope-card strong { display:block; margin-top:4px; font-weight:600; overflow-wrap:anywhere; }
+.scope-card em { display:block; margin-top:2px; font-style:normal; font-size:12px; color:var(--cp-text-muted); overflow-wrap:anywhere; }
+.pill { display:inline-block; padding:1px 9px; border-radius:999px; background:var(--cp-neutral-soft); color:var(--cp-text); font-size:12px; line-height:20px; font-weight:600; white-space:nowrap; }
+.pill.good { background:var(--cp-success-soft); color:var(--cp-success); } .pill.bad { background:var(--cp-danger-soft); color:var(--cp-danger); } .pill.warn { background:var(--cp-warning-soft); color:var(--cp-warning); } .pill.info { background:var(--cp-info-soft); color:var(--cp-info); } .pill.accent { background:var(--cp-accent-soft); color:var(--cp-accent); }
+.tabs { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 16px; border-bottom:1px solid var(--cp-border); }
+.tabs button { border:0; border-bottom:3px solid transparent; border-radius:0; background:none; padding:10px 14px; font-weight:600; color:var(--cp-text-muted); }
+.tabs button.active { color:var(--cp-accent); border-bottom-color:var(--cp-accent); }
+.tabs .count { font-weight:400; font-size:12px; margin-left:6px; color:var(--cp-text-muted); }
+input, button, select { font:inherit; color:var(--cp-text); background:var(--cp-surface); border:1px solid var(--cp-border); padding:7px 10px; border-radius:0.625rem; }
+button { cursor:pointer; } button:not(:disabled):hover { color:var(--cp-accent); border-color:var(--cp-accent); }
+:focus-visible { outline:2px solid var(--cp-accent); outline-offset:2px; }
+.controls { display:flex; gap:8px 12px; flex-wrap:wrap; align-items:center; margin:12px 0; }
+.controls label { display:flex; align-items:center; gap:8px; font-size:12px; font-weight:600; }
+.controls select { max-width:280px; }
+.search { width:min(420px,65vw); }
+.shown { font-size:12px; color:var(--cp-text-muted); margin-left:auto; }
+.scroll { overflow:auto; max-height:62vh; border:1px solid var(--cp-border); border-radius:0.625rem; }
+table { width:100%; border-collapse:separate; border-spacing:0; }
+th, td { text-align:left; vertical-align:top; padding:10px 12px; border-bottom:1px solid var(--cp-border); }
+th { position:sticky; top:0; z-index:1; background:var(--cp-surface-soft); font-weight:600; font-size:12px; white-space:nowrap; cursor:pointer; user-select:none; }
+th.sorted::after { content:" \25BE"; color:var(--cp-accent); } th.sorted.asc::after { content:" \25B4"; }
+tbody tr:hover { background:var(--cp-accent-soft); } tr.click { cursor:pointer; }
+td { overflow-wrap:anywhere; } .num { text-align:right; font-variant-numeric:tabular-nums; } .mono { font-family:Consolas, "Cascadia Mono", monospace; font-size:12px; }
+.nowrap { white-space:nowrap; } .path { min-width:150px; } .subject { min-width:240px; } td.addr { overflow-wrap:normal; word-break:normal; white-space:nowrap; font-size:13px; }
+[data-focus="tables"] body > header, [data-focus="tables"] #notices, [data-focus="tables"] body > section.block:not(#tables), [data-focus="tables"] footer { display:none; } .sub { display:block; color:var(--cp-text-muted); font-size:12px; margin-top:2px; }
+.more { display:flex; justify-content:center; padding:12px; } .more[hidden] { display:none; }
+.empty { padding:24px; text-align:center; color:var(--cp-text-muted); }
+.notice { position:relative; margin:0 0 16px; padding:10px 14px; border-radius:10px; border-left:4px solid var(--cp-warning); background:var(--cp-warning-soft); }
+.notice.info { border-left-color:var(--cp-info); background:var(--cp-info-soft); }
+.notice ul { margin:4px 0 0; padding-left:18px; }
+dialog { border:1px solid var(--cp-border); border-radius:16px; padding:0; background:var(--cp-surface); color:var(--cp-text); width:min(1000px,95vw); box-shadow:var(--cp-shadow); }
+dialog::backdrop { background:rgba(0,0,0,0.35); }
+.dialog-head { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:16px 20px; border-bottom:1px solid var(--cp-border); }
+.dialog-head h2 { margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dialog-body { padding:16px 20px; max-height:78vh; overflow:auto; }
+dl { display:grid; grid-template-columns:180px 1fr; gap:6px 16px; margin:0 0 16px; } dt { color:var(--cp-text-muted); } dd { margin:0; overflow-wrap:anywhere; }
+footer { color:var(--cp-text-muted); font-size:12px; text-align:center; margin-top:8px; }
+@media (max-width: 980px) { .metrics, .scope { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media print { body { background:#fff; padding:0; } .controls, .tabs, .more { display:none; } .scroll { max-height:none; overflow:visible; } }
+</style></head>
+<body>
+<header>
+  <div class="hero-top">
+    <div>
+      <div id="origin">Exchange Online &middot; Mailbox Message Report</div>
+      <h1 id="title">Messages</h1>
+      <p class="subtitle" id="subtitle"></p>
+      <div id="status"></div>
+    </div>
+    <div class="period"><span class="label">Run</span><div id="period"></div></div>
+  </div>
+  <div class="metrics" id="metrics"></div>
+  <div class="statusbar" id="bar"></div>
+  <div class="legend" id="legend"></div>
+</header>
+
+<div id="notices"></div>
+
+<section class="block">
+  <h2>Search</h2>
+  <p class="caption">Which mailboxes were read, where (primary mailbox, archive, Recoverable Items) and which messages were kept. The archive is read through Microsoft Graph as a mailbox of its own (MBX:&lt;ArchiveGuid&gt;).</p>
+  <div class="scope" id="scope"></div>
+</section>
+
+<section class="block" id="tables">
+  <div class="tabs" role="tablist">
+    <button class="active" data-tab="messages" id="tab-button-messages">Messages<span class="count" id="count-messages"></span></button>
+    <button data-tab="folders">Folders<span class="count" id="count-folders"></span></button>
+    <button data-tab="mailboxes">Mailboxes<span class="count" id="count-mailboxes"></span></button>
+  </div>
+  <div id="tab-messages">
+    <div class="controls">
+      <input class="search" id="search-messages" type="search" placeholder="Search a subject, an address, a folder, a message ID...">
+      <label>Location <select id="filter-location"><option value="">All</option></select></label>
+      <label id="label-mailbox">Mailbox <select id="filter-mailbox"><option value="">All</option></select></label>
+      <span class="shown" id="shown-messages"></span>
+    </div>
+    <div class="scroll"><table id="messages"><thead></thead><tbody></tbody></table><div class="empty" id="empty-messages" hidden>No message.</div><div class="more" id="more-messages" hidden><button id="button-more">Show more</button></div></div>
+  </div>
+  <div id="tab-folders" hidden>
+    <div class="controls"><input class="search" id="search-folders" type="search" placeholder="Search a folder, a mailbox, a status..."><label>Location <select id="filter-folder-location"><option value="">All</option></select></label><label>Status <select id="filter-folders"><option value="">All</option></select></label><span class="shown" id="shown-folders"></span></div>
+    <div class="scroll"><table id="folders"><thead></thead><tbody></tbody></table><div class="empty" id="empty-folders" hidden>No folder.</div><div class="more" id="more-folders" hidden><button id="button-more-folders">Show more</button></div></div>
+  </div>
+  <div id="tab-mailboxes" hidden>
+    <div class="controls"><input class="search" id="search-mailboxes" type="search" placeholder="Search a mailbox, a status..."><label>Status <select id="filter-mailboxes"><option value="">All</option></select></label></div>
+    <div class="scroll"><table id="mailboxes"><thead></thead><tbody></tbody></table><div class="empty" id="empty-mailboxes" hidden>No mailbox.</div></div>
+  </div>
+</section>
+
+<dialog id="detail"><div class="dialog-head"><h2 id="detail-title"></h2><button id="detail-close">Close</button></div><div class="dialog-body" id="detail-body"></div></dialog>
+<footer id="footer"></footer>
+
+<script type="application/json" id="data-summary">{{SUMMARY_JSON}}</script>
+<script type="application/json" id="data-mailboxes">{{MAILBOXES_JSON}}</script>
+<script type="application/json" id="data-folders">{{FOLDERS_JSON}}</script>
+<script type="application/json" id="data-messages">{{MESSAGES_JSON}}</script>
+<script>
+(() => {
+  const read = id => JSON.parse(document.getElementById(id).textContent || "null");
+  const S = read("data-summary") || {};
+  const B = [].concat(read("data-mailboxes") || []).filter(Boolean);
+  const F = [].concat(read("data-folders") || []).filter(Boolean);
+  const cols = S.Columns || [];
+  const ix = Object.fromEntries(cols.map((c, i) => [c, i]));
+  // A message: its array, read by the name of its column.
+  const M = [].concat(read("data-messages") || []).filter(Array.isArray).map(a => { const o = {}; cols.forEach((c, i) => o[c] = a[i] ?? ""); return o; });
+  const $ = id => document.getElementById(id);
+  const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fmt = n => Number(n || 0).toLocaleString("en-US");
+  const list = v => v == null ? [] : (Array.isArray(v) ? v : [v]);
+  const n = S.Counts || {};
+  const req = S.Request || {};
+  const tone = s => ({ Read: "good", Completed: "good", Yes: "good", Primary: "info", Archive: "accent", "Recoverable Items": "warn", Partial: "warn", Warning: "warn", "Not read": "bad", Failed: "bad", No: "", Unknown: "warn", Empty: "", Excluded: "", Graph: "info", File: "accent" }[s] || "");
+  const pill = s => s ? `<span class="pill ${tone(s)}">${esc(s)}</span>` : "";
+  const where = m => m.RecoverableItems === "Yes" ? `${m.Location} · Recoverable Items` : m.Location;
+  const locPill = m => pill(m.Location) + (m.RecoverableItems === "Yes" ? ` <span class="pill warn">Recoverable Items</span>` : "");
+  const one = S.Scope === "Mailbox" || B.length === 1;
+
+  // ---- header -----------------------------------------------------------------------------------------------
+  const who = S.Scope === "Mailbox" && S.Mailbox ? (S.Mailbox.DisplayName || S.Mailbox.Address) : (B.length === 1 ? (B[0].DisplayName || B[0].Address) : `${fmt(B.length)} mailboxes`);
+  $("title").textContent = `Messages of ${who}`;
+  const what = [];
+  what.push(list(req.Location).includes("Archive") ? (list(req.Location).includes("Primary") ? "primary mailbox and archive" : "archive only") : "primary mailbox only");
+  if (req.RecoverableItems) what.push("Recoverable Items included");
+  if (req.StartText || req.EndText) what.push(`received ${req.StartText ? "from " + req.StartText : ""} ${req.EndText ? "to " + req.EndText : ""}`.trim());
+  if (list(req.Subject).length) what.push(`subject contains ${list(req.Subject).map(s => "'" + s + "'").join(" or ")}`);
+  if (req.Recipients === false) what.push("without recipients");
+  $("subtitle").textContent = what.join(" · ");
+  $("status").innerHTML = pill(S.StatusText || S.Status) + (S.Error ? ` <span class="muted">${esc(S.Error)}</span>` : "");
+  $("period").innerHTML = [
+    ["Received", req.StartText || req.EndText ? `${esc(req.StartText || "any date")} &rarr; ${esc(req.EndText || "today")}` : "any date"],
+    ["Time zone", esc(req.TimeZone)],
+    ["Generated", esc(S.GeneratedText)],
+    ["Duration", `${esc(S.DurationSeconds)} s`],
+    ["Tenant", esc(S.Organization || S.Tenant)]
+  ].map(([k, v]) => `<div><span class="muted">${k}</span> &nbsp;${v}</div>`).join("");
+
+  const tiles = [
+    { label: "Messages", value: n.Messages, small: `in ${fmt(n.FoldersWithMessages)} folder(s) · ${fmt(n.Mailboxes)} mailbox(es)`, cls: "tile-primary" },
+    { label: "Primary mailbox", value: n.PrimaryMessages, small: list(req.Location).includes("Primary") ? `${fmt(F.filter(f => f.Location === "Primary" && f.RecoverableItems !== true && f.RecoverableItems !== "Yes").length)} folders` : "not read", cls: "tile-tinted" },
+    { label: "Archive", value: n.ArchiveMessages, small: list(req.Location).includes("Archive") ? `${fmt(n.WithArchive)} archive(s) · ${fmt(F.filter(f => f.Location === "Archive" && !(f.RecoverableItems === true || f.RecoverableItems === "Yes")).length)} folders` : "not read", cls: "" },
+    req.RecoverableItems
+      ? { label: "Recoverable Items", value: n.RecoverableMessages, small: "Deletions, Purges, Versions...", cls: "" }
+      : { label: "Folders not read", value: n.FoldersFailed, small: `${fmt(n.FoldersRead)} read · ${fmt(n.FoldersEmpty)} empty${n.FoldersExcluded ? " · " + fmt(n.FoldersExcluded) + " left out" : ""}`, cls: "" }
+  ];
+  $("metrics").innerHTML = tiles.map(t => `<div class="tile ${t.cls}"><span class="tile-label">${t.label}</span><strong>${fmt(t.value)}</strong><small>${esc(t.small)}</small></div>`).join("");
+  const parts = [["Primary mailbox", n.PrimaryMessages, "var(--cp-info)"], ["Archive", n.ArchiveMessages, "var(--cp-accent)"], ["Recoverable Items", n.RecoverableMessages, "var(--cp-warning)"]];
+  const sum = parts.reduce((a, p) => a + Math.max(0, p[1] || 0), 0) || 1;
+  $("bar").innerHTML = parts.map(p => `<span style="width:${100 * Math.max(0, p[1] || 0) / sum}%;background:${p[2]}"></span>`).join("");
+  $("legend").innerHTML = parts.map(p => `<span><i style="background:${p[2]}"></i>${p[0]} ${fmt(p[1])}</span>`).join("");
+
+  // ---- notices ----------------------------------------------------------------------------------------------
+  const notes = [];
+  if (list(S.Warnings).length) notes.push(`<div class="notice"><strong>Warnings</strong><ul>${list(S.Warnings).map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>`);
+  if (n.MailboxesNotRead || n.MailboxesPartial || n.FoldersFailed) notes.push(`<div class="notice"><strong>Not everything was read:</strong> ${fmt(n.MailboxesNotRead)} mailbox(es) not read · ${fmt(n.MailboxesPartial)} read in part · ${fmt(n.FoldersFailed)} folder(s) in error. The <strong>Mailboxes</strong> and <strong>Folders</strong> tabs give the reason.</div>`);
+  if (!S.MessagesHere) notes.push(`<div class="notice info"><strong>One report per mailbox:</strong> the messages are in the report of each mailbox (links in the <strong>Mailboxes</strong> tab) and in its CSV file.</div>`);
+  else if (S.MessagesTotal > S.MessagesShown) notes.push(`<div class="notice info"><strong>${fmt(S.MessagesShown)} of ${fmt(S.MessagesTotal)} messages</strong> are in this page (Report.HtmlMaxMessages): every message is in the CSV file.</div>`);
+  $("notices").innerHTML = notes.join("");
+
+  // ---- search -----------------------------------------------------------------------------------------------
+  const roles = list(S.Roles);
+  $("scope").innerHTML = [
+    ["Mailboxes", one && B[0] ? `${esc(B[0].DisplayName || B[0].Address)}<em>${esc(B[0].Address)} · archive: ${esc(B[0].Archive)}${B[0].ArchiveSource ? " (" + esc(B[0].ArchiveSource === "File" ? "ArchiveGuid of the list" : "Graph") + ")" : ""}</em>` : `${fmt(B.length)} mailboxes<em>${fmt(n.MailboxesRead)} read · ${fmt(n.WithArchive)} with an archive · see the Mailboxes tab</em>`],
+    ["Messages", `${req.StartText || req.EndText ? esc(req.StartText || "any date") + " &rarr; " + esc(req.EndText || "today") : "any date"}<em>${list(req.Subject).length ? "subject contains " + list(req.Subject).map(s => "'" + esc(s) + "'").join(" or ") : "every subject"}</em>`],
+    ["Where", `${list(req.Location).map(l => l === "Primary" ? "primary mailbox" : "archive").join(" + ")}<em>${req.RecoverableItems ? "Recoverable Items included" : "Recoverable Items not read"}${list(req.ExcludeFolders).length ? " · left out: " + list(req.ExcludeFolders).map(esc).join(", ") : ""}</em>`],
+    ["Application", `${esc(S.AppName || S.AppId)}<em>${esc(roles.filter(r => /^(Mail|User)\./.test(r)).join(", "))} · ${esc(S.Tool)} ${esc(S.Version)}</em>`]
+  ].map(([k, v]) => `<div class="scope-card"><span>${k}</span><strong>${v}</strong></div>`).join("");
+
+  // ---- tables: a page at a time ----------------------------------------------------------------------------------
+  // One collator for every sort: 200,000 rows sort in a second or two (localeCompare would rebuild it each time).
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+  function table(id, columns, rows, onClick, page, shownId) {
+    const el = $(id), head = el.querySelector("thead"), body = el.querySelector("tbody");
+    const more = $("more-" + id);
+    let sortKey = null, asc = true, current = rows, limit = page;
+    head.innerHTML = "<tr>" + columns.map((c, i) => `<th data-i="${i}" class="${c.num ? "num" : ""}">${c.label}</th>`).join("") + "</tr>";
+    const render = () => {
+      const view = current.slice(0, limit);
+      body.innerHTML = view.map((r, i) => `<tr data-i="${i}" class="${onClick ? "click" : ""}">${columns.map(c => `<td class="${c.cls || ""}">${c.html ? c.html(r) : esc(r[c.key])}</td>`).join("")}</tr>`).join("");
+      $("empty-" + id).hidden = current.length > 0;
+      if (more) more.hidden = current.length <= limit;
+      if (shownId) $(shownId).textContent = current.length > limit ? `${fmt(limit)} of ${fmt(current.length)} shown` : `${fmt(current.length)} shown`;
+      if (onClick) body.querySelectorAll("tr").forEach(tr => tr.addEventListener("click", () => onClick(view[+tr.dataset.i])));
+    };
+    head.querySelectorAll("th").forEach(th => th.addEventListener("click", () => {
+      const c = columns[+th.dataset.i]; asc = sortKey === c.key ? !asc : true; sortKey = c.key;
+      head.querySelectorAll("th").forEach(x => x.classList.remove("sorted", "asc")); th.classList.add("sorted"); if (asc) th.classList.add("asc");
+      current = [...current].sort((a, b) => { const x = a[c.sort || c.key] ?? "", y = b[c.sort || c.key] ?? ""; return (typeof x === "number" && typeof y === "number" ? x - y : collator.compare(String(x), String(y))) * (asc ? 1 : -1); });
+      limit = page; render();
+    }));
+    return { set: l => { current = l; limit = page; render(); }, more: () => { limit += page; render(); } };
+  }
+  const messageCols = [
+    { key: "Received", label: "Received", cls: "nowrap mono" },
+    ...(one ? [] : [{ key: "Mailbox", label: "Mailbox", html: r => `${esc(r.MailboxName || r.Mailbox)}<span class="sub">${esc(r.MailboxName ? r.Mailbox : "")}</span>` }]),
+    { key: "Location", label: "Location", sort: "Location", html: r => locPill(r) },
+    { key: "FolderPath", label: "Folder", cls: "path" },
+    { key: "Subject", label: "Subject", cls: "subject", html: r => `<strong>${esc(r.Subject || "(no subject)")}</strong><span class="sub">from ${esc(r.FromName && r.FromName !== r.From ? r.FromName + " <" + r.From + ">" : (r.From || "-"))}</span>` },
+    { key: "To", label: "To", cls: "addr", html: r => { const to = r.To ? r.To.split("; ") : []; return `${to.slice(0, 3).map(esc).join("<br>")}${to.length > 3 ? `<span class="sub">+${to.length - 3} more</span>` : ""}${r.Cc ? `<span class="sub">cc ${esc(r.Cc.length > 60 ? r.Cc.slice(0, 60) + "..." : r.Cc)}</span>` : ""}${r.Bcc ? `<span class="sub">bcc ${esc(r.Bcc)}</span>` : ""}`; } },
+    { key: "HasAttachments", label: "Att.", html: r => r.HasAttachments === "Yes" ? `<span class="pill">Yes</span>` : "" }
+  ];
+  const folderCols = [
+    ...(one ? [] : [{ key: "Mailbox", label: "Mailbox", cls: "mono" }]),
+    { key: "Location", label: "Location", html: r => pill(r.Location) + (r.RecoverableItems === true || r.RecoverableItems === "Yes" ? ` <span class="pill warn">Recoverable Items</span>` : "") },
+    { key: "Path", label: "Folder", cls: "path" },
+    { key: "TotalItems", label: "Items", num: true, cls: "num" },
+    { key: "Messages", label: "Messages found", num: true, cls: "num" },
+    { key: "Status", label: "Status", html: r => pill(r.Status) },
+    { key: "Detail", label: "Detail" }
+  ];
+  const mailboxCols = [
+    { key: "Address", label: "Mailbox", html: r => `<strong>${esc(r.DisplayName || r.Address)}</strong><span class="sub">${esc(r.Address)}</span>${r.Html ? `<span class="sub"><a href="${esc(r.Html)}">report of this mailbox</a>${r.Csv ? ` · <a href="${esc(r.Csv)}">CSV</a>` : ""}</span>` : ""}` },
+    { key: "Status", label: "Status", html: r => pill(r.Status) + `<span class="sub">${esc(r.Detail)}</span>` },
+    { key: "Archive", label: "Archive", html: r => pill(r.Archive) + (r.ArchiveSource ? `<span class="sub">${r.ArchiveSource === "File" ? "ArchiveGuid of the list" : "from Graph"}</span>` : "") },
+    { key: "FoldersRead", label: "Folders read", num: true, cls: "num", html: r => fmt(r.FoldersRead) + (r.FoldersFailed ? `<span class="sub"><span class="pill bad">${fmt(r.FoldersFailed)} failed</span></span>` : "") },
+    { key: "PrimaryMessages", label: "Primary", num: true, cls: "num" },
+    { key: "ArchiveMessages", label: "Archive", num: true, cls: "num" },
+    { key: "RecoverableMessages", label: "Recoverable Items", num: true, cls: "num" },
+    { key: "Messages", label: "Total", num: true, cls: "num" },
+    { key: "Notes", label: "Notes" }
+  ];
+  const tm = table("messages", messageCols, M, showMessage, 200, "shown-messages");
+  const tf = table("folders", folderCols, F, null, 500, "shown-folders");
+  const tb = table("mailboxes", mailboxCols, B, null, 100000, null);
+  $("button-more").addEventListener("click", () => tm.more());
+  $("button-more-folders").addEventListener("click", () => tf.more());
+  const fill = (sel, values) => [...new Set(values.filter(Boolean))].sort().forEach(v => sel.insertAdjacentHTML("beforeend", `<option>${esc(v)}</option>`));
+  fill($("filter-location"), M.map(where));
+  fill($("filter-mailbox"), M.map(m => m.Mailbox));
+  fill($("filter-folder-location"), F.map(f => f.Location + (f.RecoverableItems === true || f.RecoverableItems === "Yes" ? " · Recoverable Items" : "")));
+  fill($("filter-folders"), F.map(f => f.Status || "(not read)"));
+  fill($("filter-mailboxes"), B.map(b => b.Status));
+  $("label-mailbox").hidden = one;
+  const textOf = o => o.__text || (o.__text = Object.values(o).join(" ").toLowerCase());
+  const applyMessages = () => { const q = $("search-messages").value.toLowerCase(), l = $("filter-location").value, b = $("filter-mailbox").value; tm.set(M.filter(m => (!q || textOf(m).includes(q)) && (!l || where(m) === l) && (!b || m.Mailbox === b))); };
+  const applyFolders = () => { const q = $("search-folders").value.toLowerCase(), l = $("filter-folder-location").value, s = $("filter-folders").value; tf.set(F.filter(f => (!q || textOf(f).includes(q)) && (!l || (f.Location + (f.RecoverableItems === true || f.RecoverableItems === "Yes" ? " · Recoverable Items" : "")) === l) && (!s || (f.Status || "(not read)") === s))); };
+  const applyMailboxes = () => { const q = $("search-mailboxes").value.toLowerCase(), s = $("filter-mailboxes").value; tb.set(B.filter(b => (!q || textOf(b).includes(q)) && (!s || b.Status === s))); };
+  // A report can hold 200,000 messages: the search waits for a pause in the typing (filters apply at once).
+  const later = (fn, ms) => { let t = 0; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; };
+  $("search-messages").addEventListener("input", later(applyMessages, M.length > 20000 ? 350 : 120));
+  ["filter-location", "filter-mailbox"].forEach(id => $(id).addEventListener("input", applyMessages));
+  $("search-folders").addEventListener("input", later(applyFolders, 120));
+  ["filter-folder-location", "filter-folders"].forEach(id => $(id).addEventListener("input", applyFolders));
+  ["search-mailboxes", "filter-mailboxes"].forEach(id => $(id).addEventListener("input", applyMailboxes));
+  applyMessages(); applyFolders(); applyMailboxes();
+  $("count-messages").textContent = S.MessagesHere ? (S.MessagesTotal > M.length ? `${fmt(M.length)} of ${fmt(S.MessagesTotal)}` : fmt(M.length)) : "per mailbox";
+  $("count-folders").textContent = fmt(F.length); $("count-mailboxes").textContent = fmt(B.length);
+  document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("active", x === b));
+    ["messages", "folders", "mailboxes"].forEach(t => { $("tab-" + t).hidden = b.dataset.tab !== t; });
+  }));
+  // One report per mailbox: this page opens on the mailboxes and their links.
+  if (!S.MessagesHere) document.querySelector('.tabs button[data-tab="mailboxes"]').click();
+  // Documentation images: scoutTab=<tab> opens a tab, scoutDetail=<n> the message n of the list.
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("scoutTab")) { const b = document.querySelector(`.tabs button[data-tab="${params.get("scoutTab")}"]`); if (b) b.click(); }
+  if (params.get("scoutDetail") && M.length) setTimeout(() => showMessage(M[Math.min(M.length - 1, Math.max(0, +params.get("scoutDetail") || 0))]), 0);
+
+  function showMessage(m) {
+    $("detail-title").textContent = m.Subject || "(no subject)";
+    const dl = [
+      ["Mailbox", `${esc(m.MailboxName)} <span class="mono">${esc(m.Mailbox)}</span>`],
+      ["Location", locPill(m)],
+      ["Folder", `<span class="mono">${esc(m.FolderPath)}</span>`],
+      ["Received", `${esc(m.Received)} <span class="muted">(${esc(m.ReceivedUtc)})</span>`],
+      ["Sent", esc(m.Sent || "-")],
+      ["From", m.From ? `${esc(m.FromName)} <span class="mono">${esc(m.From)}</span>` : esc(m.FromName || "-")],
+      ["Sender", m.Sender && m.Sender !== m.From ? `<span class="mono">${esc(m.Sender)}</span> <span class="muted">(sent on behalf)</span>` : `<span class="muted">same as From</span>`],
+      ["To", esc(m.To || "-")],
+      ["Cc", esc(m.Cc || "-")],
+      ["Bcc", esc(m.Bcc || "-")],
+      ["Internet message ID", `<span class="mono">${esc(m.InternetMessageId || "-")}</span>`],
+      ["Attachments", esc(m.HasAttachments || "-")],
+      ["Importance", esc(m.Importance || "-")],
+      ["Read", esc(m.IsRead || "-")],
+      ["Type", esc(m.Type || "-")],
+      ["Item ID", `<span class="mono">${esc(m.ItemId)}</span>`]
+    ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
+    $("detail-body").innerHTML = `<dl>${dl}</dl><p class="muted">The body of the message is not read: the report holds what the application needs to list the messages (Mail.ReadBasic.All).</p>`;
+    $("detail").showModal();
+  }
+  $("detail-close").addEventListener("click", () => $("detail").close());
+  $("footer").textContent = `${S.Tool || "Mailbox Message Report"} ${S.Version || ""} · Nicolas Fabert · Microsoft Graph · nothing in this file was sent anywhere`;
+})();
+</script>
+</body></html>
