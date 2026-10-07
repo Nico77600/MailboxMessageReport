@@ -23,12 +23,12 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 2.0.0
+    Version : 2.1.0
 #>
 
 $script:ReportColumns = [ordered]@{
     Mailboxes = @('Input', 'Address', 'DisplayName', 'Status', 'State', 'Detail', 'Archive', 'ArchiveSource', 'ArchiveGuid', 'PrimaryFolders', 'ArchiveFolders', 'FoldersRead', 'FoldersFailed', 'PrimaryMessages', 'ArchiveMessages', 'RecoverableMessages', 'Messages', 'Notes')
-    Folders   = @('Mailbox', 'MailboxName', 'Location', 'RecoverableItems', 'Path', 'Name', 'TotalItems', 'Messages', 'Status', 'Detail')
+    Folders   = @('Mailbox', 'MailboxName', 'Location', 'RecoverableItems', 'Path', 'Name', 'TotalItems', 'Messages', 'Seconds', 'Status', 'Detail')
 }
 
 function New-MmrRunFolder {
@@ -252,7 +252,7 @@ function Export-MmrReport {
     $data = [ordered]@{}
     foreach ($p in $Result.PSObject.Properties) { $data[$p.Name] = $p.Value }
     # The part files are gone once the report is written.
-    $data.Folders = @($Result.Folders | Select-Object -Property * -ExcludeProperty Parts, SlicesDone)
+    $data.Folders = @($Result.Folders | Select-Object -Property * -ExcludeProperty Parts, SlicesDone, Started)
     [IO.File]::WriteAllText($files.Summary, (ConvertTo-Json -InputObject $data -Depth 8), [Text.UTF8Encoding]::new($false))
 
     if ($PartsPath -and (Test-Path -LiteralPath $PartsPath)) { Remove-Item -LiteralPath $PartsPath -Recurse -Force -ErrorAction SilentlyContinue }

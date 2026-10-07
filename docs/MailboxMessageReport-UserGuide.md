@@ -1,7 +1,7 @@
 ---
 title: Mailbox Message Report
 subtitle: User guide
-version: 2.0.0
+version: 2.1.0
 author: Nicolas Fabert
 updated: 2026-10-07
 ---
@@ -121,7 +121,7 @@ With `User.Read.All`, the tool finds the archive itself in Microsoft Graph. With
 .\Invoke-MailboxMessageReport.ps1 -Mailbox megan.bowen@contoso.com -ExcludeFolder '\Junk Email', '\Deleted Items'
 ```
 
-Exchange reads the recipients (To, Cc, Bcc) of each message one by one: on a folder of tens of thousands of meeting messages, 1,000 messages take about 30 s with them and half a second without (lab: 39,434 messages in 7 min 27 s with them, 43 s without). A folder of more than 5,000 items is read in slices of its dates, 4 at a time. The progress line gives the time left.
+Exchange reads the recipients (To, Cc, Bcc) of each message one by one: on a folder of tens of thousands of meeting messages, 1,000 messages take about 30 s with them and half a second without (lab: 39,434 messages in 7 min 27 s with them, 43 s without). A folder of more than 2,000 messages is read in slices of the same number of messages, 4 at a time, cut again while read (a folder of 39,414 meeting messages with recipients: 3 min 08 s). The progress line gives the share of the messages read, their number a second and the time left; the log gives the speed of each mailbox and the slowest folders.
 
 ### 2.7 In the window
 
@@ -166,7 +166,8 @@ Report | *Open the report* (every message), *Open the CSV*, *Open the folder*.
 Each run writes a new folder under `reports\` (`MailboxMessageReport_20261007-101500`). The console shows it at the end:
 
 - **`MailboxMessageReport.html`** — the report: self-contained, it can be sent alone. Tiles (messages in the primary mailbox, the archive, Recoverable Items), the search, and the *Messages*, *Folders* and *Mailboxes* tabs. **Every message** is in it, compressed (up to 500,000, `Report.HtmlMaxMessages`; 1,000,000 messages: about 32 MB, open in 4 s):
-  - filters together: every field, mailbox, location, folder, sender, subject, recipient (To, Cc, Bcc), message ID, received dates, a minimum of recipients, with attachments;
+  - filters together: every field, mailbox, location, folder, sender, subject, recipient (To, Cc, Bcc), message ID, received dates, a minimum of recipients, read or unread, with attachments;
+  - columns: received, mailbox, location, folder, from, subject, to, recipients, attachments, read (an unread message in bold);
   - a click on a column sorts it; a click on a message gives every detail and **every recipient** (To, Cc, Bcc, with *Copy*);
   - *Export the view to CSV*: the messages filtered, in the order shown.
 - **`MailboxMessageReport-Messages.csv`** — every message: mailbox, location, Recoverable Items, folder path and name, received, sent, subject, from, sender, to, cc, bcc, **number of recipients**, Internet message ID, attachments, importance, read, type. Separator `;`, opens directly in Excel. A list of thousands of recipients is cut to fit an Excel cell, with the number of the others (`… (+8,739 more)`): the HTML report has them all.

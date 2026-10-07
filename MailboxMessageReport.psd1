@@ -8,7 +8,7 @@
 #
 @{
     RootModule        = 'MailboxMessageReport.psm1'
-    ModuleVersion     = '2.0.0'
+    ModuleVersion     = '2.1.0'
     GUID              = '9d3c5f41-7a2e-4b8c-a1d6-5e0f2c7b9a34'
     Author            = 'Nicolas Fabert'
     Copyright         = '(c) 2026 Nicolas Fabert. MIT License.'

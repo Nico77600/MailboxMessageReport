@@ -2,7 +2,7 @@
 <!--
     Mailbox Message Report - HTML template
     Author  : Nicolas Fabert
-    Version : 2.0.0
+    Version : 2.1.0
     Export-MmrReport (src\MailboxMessageReport.Report.ps1) writes the report from this file through the compiled
     HtmlReport, which replaces five markers (two braces on each side), each exactly once:
       TITLE      the title of the page (text), when the report is opened;
@@ -127,15 +127,16 @@ footer { color:var(--cp-text-muted); font-size:12px; text-align:center; margin-t
 .primary-button:not(:disabled):hover { background:var(--cp-accent-hover); color:var(--cp-accent-fg); }
 .grid { border:1px solid var(--cp-border); border-radius:0.625rem; overflow-x:auto; overflow-y:hidden; }
 .grid-head, .grid-row { display:grid; grid-template-columns:var(--columns); align-items:center; }
-.grid-head { background:var(--cp-surface-soft); font-weight:600; font-size:12px; border-bottom:1px solid var(--cp-border); min-width:1020px; }
+.grid-head { background:var(--cp-surface-soft); font-weight:600; font-size:12px; border-bottom:1px solid var(--cp-border); min-width:1080px; }
 .grid-head div { padding:10px; cursor:pointer; user-select:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .grid-head div.sorted::after { content:" \25BE"; color:var(--cp-accent); } .grid-head div.sorted.asc::after { content:" \25B4"; }
-#viewport { position:relative; overflow-y:auto; overflow-x:hidden; height:62vh; min-width:1020px; }
+#viewport { position:relative; overflow-y:auto; overflow-x:hidden; height:62vh; min-width:1080px; }
 #spacer { position:relative; width:100%; }
 .grid-row { position:absolute; left:0; right:0; height:36px; border-bottom:1px solid var(--cp-border); cursor:pointer; font-size:13px; }
 .grid-row div { padding:0 10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .grid-row:hover, .grid-row:focus { background:var(--cp-accent-soft); outline:none; }
 .grid-row .pill { font-size:11px; line-height:18px; padding:0 7px; }
+.grid-row.unread .subj { font-weight:600; } .grid-row .unread-mark { color:var(--cp-accent); font-weight:600; }
 #loading-messages { padding:32px 16px; text-align:center; }
 .track { height:6px; border-radius:8px; background:var(--cp-border); margin:12px auto 0; overflow:hidden; max-width:420px; }
 .fill { height:100%; width:0; border-radius:8px; background:var(--cp-accent); transition:width 160ms ease; }
@@ -190,6 +191,7 @@ footer { color:var(--cp-text-muted); font-size:12px; text-align:center; margin-t
         <label>Received from<input id="f-date-from" type="date"></label>
         <label>Received to (included)<input id="f-date-to" type="date"></label>
         <label id="f-min-label">Minimum recipients<input id="f-min" type="number" min="0" step="1" placeholder="No minimum"></label>
+        <label>Read<select id="f-read"><option value="">All</option><option value="read">Read</option><option value="unread">Unread</option></select></label>
         <label class="check"><input id="f-attachments" type="checkbox">With attachments only</label>
       </div>
       <div class="controls">
@@ -327,6 +329,7 @@ window.addEventListener("error", e => {
     { key: "Path", label: "Folder", cls: "path" },
     { key: "TotalItems", label: "Items", num: true, cls: "num" },
     { key: "Messages", label: "Messages found", num: true, cls: "num" },
+    { key: "Seconds", label: "Read in", num: true, cls: "num", html: r => r.Seconds ? (r.Seconds >= 60 ? `${Math.floor(r.Seconds / 60)} min ${String(Math.round(r.Seconds % 60)).padStart(2, "0")} s` : `${Number(r.Seconds).toFixed(1)} s`) : "" },
     { key: "Status", label: "Status", html: r => pill(r.Status) },
     { key: "Detail", label: "Detail" }
   ];
@@ -447,6 +450,7 @@ window.addEventListener("error", e => {
     const from = value("f-from"), subject = value("f-subject"), recipient = value("f-recipient"), id = value("f-id");
     const start = dayStart($("f-date-from").value), endDay = dayStart($("f-date-to").value), end = endDay == null ? null : endDay + 86400;
     const min = $("f-min").value === "" ? null : Number($("f-min").value), attachments = $("f-attachments").checked;
+    const readState = $("f-read").value === "read" ? 2 : $("f-read").value === "unread" ? 0 : -1;
     let fm = null;
     if (mailbox || where || folder) { const paths = lowerOf("paths", folders.map(f => f[4])); fm = new Uint8Array(folders.length); for (let k = 0; k < folders.length; k++) fm[k] = (!mailbox || folders[k][0] === mailbox) && (!where || whereOf(k) === where) && (!folder || paths[k].includes(folder)) ? 1 : 0; }
     const sm = subject ? mask("subjects", subjects, subject) : null;
@@ -461,6 +465,7 @@ window.addEventListener("error", e => {
       if (start != null && !(R[i] >= start)) continue;
       if (end != null && !(R[i] < end)) continue;
       if (attachments && !(X[i] & 1)) continue;
+      if (readState >= 0 && (X[i] & 2) !== readState) continue;
       if (min != null && recipientCount(i) < min) continue;
       if (sm && !sm[J[i]]) continue;
       if (pm && !((P[i] >= 0 && pm[P[i]]) || (NM[i] >= 0 && nm[NM[i]]) || (SE[i] >= 0 && pm[SE[i]]))) continue;
@@ -488,7 +493,8 @@ window.addEventListener("error", e => {
     subject: () => { const r = rankOf("subject", subjects); return perRow(i => r[J[i]]); },
     to: () => { const r = rankOf("people", people); return perRow(i => TN[i] ? r[RI[RO[i]]] : Infinity); },
     count: () => perRow(recipientCount),
-    att: () => perRow(i => X[i] & 1)
+    att: () => perRow(i => X[i] & 1),
+    read: () => perRow(i => X[i] & 2)
   };
   function sortView() {
     if (!sortKey) return;
@@ -503,10 +509,11 @@ window.addEventListener("error", e => {
     { title: "Location", width: "120px", key: "location", html: i => locHtml(FO[i]), text: i => whereOf(FO[i]) },
     { title: "Folder", width: "minmax(110px,1fr)", key: "folder", text: i => folders[FO[i]][4] },
     { title: "From", width: "minmax(120px,1fr)", key: "from", text: i => fromShort(i) },
-    { title: "Subject", width: "minmax(180px,2fr)", key: "subject", text: i => subjects[J[i]] || "(no subject)" },
+    { title: "Subject", width: "minmax(180px,2fr)", key: "subject", cls: "subj", text: i => subjects[J[i]] || "(no subject)" },
     { title: "To", width: "minmax(130px,1.1fr)", key: "to", text: i => toShort(i) },
     { title: "Recip.", width: "64px", key: "count", cls: "num", text: i => recipientCount(i) < 0 ? "" : fmt(recipientCount(i)) },
-    { title: "Att.", width: "44px", key: "att", text: i => X[i] & 1 ? "Yes" : "" }
+    { title: "Att.", width: "44px", key: "att", text: i => X[i] & 1 ? "Yes" : "" },
+    { title: "Read", width: "60px", key: "read", text: i => X[i] & 2 ? "Yes" : "No", html: i => X[i] & 2 ? "Yes" : `<span class="unread-mark">No</span>` }
   ];
   $("tables").style.setProperty("--columns", columns.map(c => c.width).join(" "));
   const head = $("grid-head");
@@ -533,7 +540,8 @@ window.addEventListener("error", e => {
     const fragment = document.createDocumentFragment();
     for (let p = first; p < last; p++) {
       const i = view[p], line = document.createElement("div");
-      line.className = "grid-row"; line.setAttribute("role", "row"); line.style.top = `${p * ROW}px`; line.dataset.row = i; line.tabIndex = 0;
+      // Unread messages: the subject in bold, as in Outlook.
+      line.className = X[i] & 2 ? "grid-row" : "grid-row unread"; line.setAttribute("role", "row"); line.style.top = `${p * ROW}px`; line.dataset.row = i; line.tabIndex = 0;
       for (const c of columns) {
         const cell = document.createElement("div"), text = c.text(i);
         if (c.html) cell.innerHTML = c.html(i); else cell.textContent = text;
@@ -613,9 +621,9 @@ window.addEventListener("error", e => {
   // ---- wiring ---------------------------------------------------------------------------------------------------------------
   const typed = later(applyFilters, count > 100000 ? 300 : 150);
   for (const id of ["f-search", "f-folder", "f-from", "f-subject", "f-recipient", "f-id", "f-min"]) $(id).addEventListener("input", typed);
-  for (const id of ["f-mailbox", "f-location", "f-date-from", "f-date-to", "f-attachments"]) $(id).addEventListener("change", applyFilters);
+  for (const id of ["f-mailbox", "f-location", "f-date-from", "f-date-to", "f-attachments", "f-read"]) $(id).addEventListener("change", applyFilters);
   $("clear-filters").addEventListener("click", () => {
-    for (const id of ["f-search", "f-folder", "f-from", "f-subject", "f-recipient", "f-id", "f-min", "f-date-from", "f-date-to", "f-mailbox", "f-location"]) $(id).value = "";
+    for (const id of ["f-search", "f-folder", "f-from", "f-subject", "f-recipient", "f-id", "f-min", "f-date-from", "f-date-to", "f-mailbox", "f-location", "f-read"]) $(id).value = "";
     $("f-attachments").checked = false;
     sortKey = null; head.querySelectorAll("div").forEach(x => x.classList.remove("sorted", "asc"));
     applyFilters();

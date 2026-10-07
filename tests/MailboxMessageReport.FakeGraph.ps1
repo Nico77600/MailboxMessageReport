@@ -1,7 +1,7 @@
 <#
     Mailbox Message Report - simulated Exchange Online tenant behind Microsoft Graph, for the tests.
     Author  : Nicolas Fabert
-    Version : 2.0.0
+    Version : 2.1.0
 
     Start-MmrGraphSend (the only function of the tool that touches the network for Graph) is replaced by a mock that
     answers from this tenant: users, their primary mailbox and archive, folders, messages, $batch (v1.0 and beta). It
@@ -13,7 +13,7 @@
       - mailFolders/delta: every folder of the tree, flat (msgfolderroot excluded), Prefer odata.maxpagesize (10 by
         default), a deltaLink on the last page; recoverableitemsroot/childFolders: the folders of Recoverable Items;
       - messages: $filter receivedDateTime ge / lt and contains(subject,'...') (any case, or), $orderby
-        receivedDateTime desc, $top / $skip and nextLink; contains() before the date, or with $orderby and no date:
+        receivedDateTime desc, $top / $skip and nextLink, $count=true (@odata.count); contains() before the date, or with $orderby and no date:
         400 InefficientFilter, as Exchange answers;
       - a page of messages cut short (200, the JSON ends after "value":[), as Exchange Online sometimes answers: a
         message it cannot return (Add-FakeMessage -Cut Always, or Recipients: only when its sender or recipients are
@@ -32,6 +32,7 @@ function Reset-FakeTenant {
         Fail      = @{}            # url pattern -> @{ Status; Code }
         CutOnce   = @{}            # url pattern -> number of pages still to cut short
         CutAbove  = @{}            # url pattern -> largest $top answered whole
+        NoCount   = $false         # $true: $count=true is ignored (no @odata.count)
         Open      = @{}            # mailbox -> requests in flight
         MaxOpen   = @{}            # mailbox -> most requests in flight at once
         Next      = 0
@@ -104,7 +105,7 @@ function Add-FakeMessage {
         [Parameter(Mandatory)][string]$Address, [ValidateSet('Primary', 'Archive')][string]$Location = 'Primary', [Parameter(Mandatory)][string]$Path, [switch]$Recoverable,
         [Parameter(Mandatory)][string]$Subject, [Parameter(Mandatory)][datetime]$Received, [string]$From = 'sender@fabrikam.test', [string]$FromName = 'Sender',
         [string[]]$To = @(), [string[]]$Cc = @(), [string[]]$Bcc = @(), [switch]$Attachments, [string]$Type, [string]$Body,
-        [ValidateSet('', 'Always', 'Recipients')][string]$Cut = ''
+        [ValidateSet('', 'Always', 'Recipients')][string]$Cut = '', [switch]$Unread
     )
     $folder = Add-FakeFolder -Address $Address -Location $Location -Path $Path -Recoverable:$Recoverable
     $utc = [datetime]::SpecifyKind($Received, [DateTimeKind]::Utc)
@@ -114,7 +115,7 @@ function Add-FakeMessage {
         receivedDateTime = $utc.ToString('yyyy-MM-ddTHH:mm:ssZ'); sentDateTime = $utc.AddMinutes(-1).ToString('yyyy-MM-ddTHH:mm:ssZ')
         from = @{ emailAddress = @{ name = $FromName; address = $From } }; sender = @{ emailAddress = @{ name = $FromName; address = $From } }
         toRecipients = @(& $recipients $To); ccRecipients = @(& $recipients $Cc); bccRecipients = @(& $recipients $Bcc)
-        internetMessageId = "<$([guid]::NewGuid().ToString('n'))@fabrikam.test>"; hasAttachments = [bool]$Attachments; importance = 'normal'; isRead = $true
+        internetMessageId = "<$([guid]::NewGuid().ToString('n'))@fabrikam.test>"; hasAttachments = [bool]$Attachments; importance = 'normal'; isRead = -not $Unread
         body = @{ contentType = 'html'; content = $(if ($Body) { $Body } else { "<p>$Subject</p>" }) }
     }
     if ($Type) { $m['@odata.type'] = $Type }
@@ -257,7 +258,10 @@ function Invoke-FakeGraphRequest {
         }
         # $select: the properties asked only (and id), as Graph answers.
         if ($select.Count) { $items = @($items | ForEach-Object { $o = $_; $view = [ordered]@{}; foreach ($p in $o.PSObject.Properties) { if ($p.Name -in $select -or $p.Name -in 'id', '@odata.type') { $view[$p.Name] = $p.Value } }; [pscustomobject]$view }) }
-        return @{ status = 200; body = (& $page $items $top $path); cut = $cut }
+        $body = & $page $items $top $path
+        # $count=true: the messages of the filter, on every page that asks it (as Graph).
+        if ($q['$count'] -eq 'true' -and -not $script:Fake.NoCount) { $body['@odata.count'] = $items.Count }
+        return @{ status = 200; body = $body; cut = $cut }
     }
     return @{ status = 400; body = @{ error = @{ code = 'BadRequest'; message = "Unknown request $Method $path" } } }
 }

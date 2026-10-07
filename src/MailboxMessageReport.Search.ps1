@@ -22,10 +22,12 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 2.0.0
+    Version : 2.1.0
 #>
 
 $script:StepIndex = 0
+# The progress of the messages is shown every 200 ms at most (the tests: every page).
+$script:MmrProgressMilliseconds = 200
 $script:StepTotal = 0
 
 function Initialize-MmrSteps { param([int]$Total) $script:StepIndex = 0; $script:StepTotal = $Total }
@@ -234,68 +236,121 @@ function Get-MmrFolders {
 
 function Get-MmrFolderSlices {
     <#
-        A large folder (more than Graph.SplitFolderItems items) is read in slices of its received dates, side by side:
-        the pages of one list come one after the other, the slices of a folder 4 at a time. Its oldest and newest
-        message (of the filter) are read first (one message each, its date only); the period between them is cut in
-        equal parts (one per SplitFolderItems items, 16 at most). Returns folder ID -> list of filters, newest slice first;
-        a folder whose dates could not be read is read in one list.
+    .SYNOPSIS
+        Cuts each large folder (more than Graph.SplitFolderItems messages) into slices of the same number of messages,
+        read side by side.
+    .DESCRIPTION
+        The pages of one list come one after the other; the slices of a folder are read 4 at a time (the limit of
+        Exchange Online per mailbox). Three steps, each read 4 at a time per mailbox and 16 in all:
+          1. its newest message with the number of messages of the filter ($count=true), and its oldest message;
+          2. the received date of the message at 1/n, 2/n... of the folder ($top=1&$skip=k*N/n, newest first): the
+             cuts, so that every slice holds about N/n messages (n = N / SplitFolderItems, 16 at most);
+          3. a folder whose number is not known is cut in equal periods between its oldest and newest message.
+        Equal periods alone left a folder of meeting messages almost whole in one slice (39,372 of 39,419 messages in
+        3 days of 6 months, lab 2026-10-07): read page after page, one request at a time. Read-MmrMessages cuts a
+        slice again while it is read when its mailbox has free slots.
+    .OUTPUTS
+        Folder ID -> @{ Count (messages of the filter, -1: not known); Oldest (date of the oldest message, or $null);
+        Slices (newest first, each @{ Filter; Start; End; Lower }) }. Start / End: the bounds of the filter ($null:
+        open, up to the period asked); Lower: the oldest date the slice can hold (to cut it again). A folder of one
+        slice is not in the result, but its Count.
     #>
     param([object[]]$Folders, [pscustomobject]$Request, [hashtable]$Settings, [string]$Filter)
     $split = [int]$Settings.SplitFolderItems
-    $slices = @{}
+    $result = @{}
     $big = @($Folders | Where-Object { $split -gt 0 -and $_.TotalItems -gt $split })
-    if (-not $big.Count) { return $slices }
-    $edges = @{}
-    $jobs = foreach ($f in $big) {
-        foreach ($order in 'desc', 'asc') {
-            New-MmrPagedJob -Id "$order|$($f.MailboxKey)|$($f.Id)" -Url (Get-MmrMessagesUrl -MailboxKey $f.MailboxKey -FolderId $f.Id -Filter $Filter -PageSize 1 -Select 'receivedDateTime' -OrderBy $order) -Tag $f
-        }
-    }
+    if (-not $big.Count) { return $result }
+    $parse = { param([string]$Text) [datetime]::Parse($Text, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal) }
+    $dates = @{}; $counts = @{}
     $onPage = {
         param($Job, [string]$Content)
         $m = [regex]::Match($Content, '"receivedDateTime"\s*:\s*"([^"]+)"')
-        if ($m.Success) { $edges[$Job.Id] = [datetime]::Parse($m.Groups[1].Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal) }
+        if ($m.Success) { $dates[$Job.Id] = & $parse $m.Groups[1].Value }
+        $n = [regex]::Match($Content, '"@odata\.count"\s*:\s*(\d+)')
+        if ($n.Success) { $counts[$Job.Id] = [long]$n.Groups[1].Value }
         return ''
     }
-    Invoke-MmrGraphPaged -Jobs @($jobs) -OnPage $onPage -OnDone { param($Job, $Status, $Code, $Message) if ($Status -ne 200) { Write-MmrLog 'WARN' "Dates of $($Job.Tag.Path): $Status $Code" } }
+    $onDone = { param($Job, $Status, $Code, $Message) if ($Status -ne 200) { Write-MmrLog 'WARN' "Slices of $($Job.Tag.Path): $Status $Code $Message" } }
+    # ---- 1. newest (with the number of messages) and oldest --------------------------------------------------
+    $jobs = foreach ($f in $big) {
+        $key = "$($f.MailboxKey)|$($f.Id)"
+        New-MmrPagedJob -Id "desc|$key" -Url ((Get-MmrMessagesUrl -MailboxKey $f.MailboxKey -FolderId $f.Id -Filter $Filter -PageSize 1 -Select 'receivedDateTime' -OrderBy 'desc') + '&$count=true') -Tag $f
+        New-MmrPagedJob -Id "asc|$key" -Url (Get-MmrMessagesUrl -MailboxKey $f.MailboxKey -FolderId $f.Id -Filter $Filter -PageSize 1 -Select 'receivedDateTime' -OrderBy 'asc') -Tag $f
+    }
+    Invoke-MmrGraphPaged -Jobs @($jobs) -OnPage $onPage -OnDone $onDone
+    # ---- 2. the dates of the cuts: the message at k*N/n ----------------------------------------------------------
+    $plan = @{}
+    $jobs = [Collections.Generic.List[object]]::new()
     foreach ($f in $big) {
-        $newest = $edges["desc|$($f.MailboxKey)|$($f.Id)"]; $oldest = $edges["asc|$($f.MailboxKey)|$($f.Id)"]
-        if ($null -eq $newest -or $null -eq $oldest -or $newest -le $oldest) { continue }
-        $n = [int][Math]::Min(16, [Math]::Ceiling($f.TotalItems / [double]$split))
-        # Whole seconds: the dates of the filter have no fraction, two slices meet on the same second (lt / ge).
-        $from = $oldest
-        $to = $newest.AddSeconds(1)
-        $step = [Math]::Max([TimeSpan]::TicksPerSecond, [long](($to - $from).Ticks / $n))
-        $cuts = [Collections.Generic.List[datetime]]::new()
-        $cuts.Add($from)
+        $key = "$($f.MailboxKey)|$($f.Id)"
+        $count = if ($counts.ContainsKey("desc|$key")) { $counts["desc|$key"] } else { -1 }
+        $n = [int][Math]::Min(16, [Math]::Ceiling($(if ($count -ge 0) { $count } else { $f.TotalItems }) / [double]$split))
+        $plan[$key] = @{ Count = $count; N = $n; Newest = $dates["desc|$key"]; Oldest = $dates["asc|$key"] }
+        if ($count -lt 0 -or $n -lt 2) { continue }
         for ($k = 1; $k -lt $n; $k++) {
-            $t = $from.AddTicks($step * $k)
-            $t = $t.AddTicks(-($t.Ticks % [TimeSpan]::TicksPerSecond))
-            if ($t -gt $cuts[-1] -and $t -lt $to) { $cuts.Add($t) }
+            $skip = [long][Math]::Floor($k * $count / [double]$n)
+            $jobs.Add((New-MmrPagedJob -Id "cut|$key|$k" -Url ((Get-MmrMessagesUrl -MailboxKey $f.MailboxKey -FolderId $f.Id -Filter $Filter -PageSize 1 -Select 'receivedDateTime' -OrderBy 'desc') + "&`$skip=$skip") -Tag $f))
         }
-        $cuts.Add($to)
+    }
+    if ($jobs.Count) { Invoke-MmrGraphPaged -Jobs $jobs.ToArray() -OnPage $onPage -OnDone $onDone }
+    # ---- 3. the slices ---------------------------------------------------------------------------------------------
+    foreach ($f in $big) {
+        $key = "$($f.MailboxKey)|$($f.Id)"
+        $p = $plan[$key]
+        $entry = @{ Count = $p.Count; Oldest = $p.Oldest; Slices = @() }
+        $result[$f.Id] = $entry
+        if ($p.N -lt 2 -or $null -eq $p.Newest -or $null -eq $p.Oldest -or $p.Newest -le $p.Oldest) { continue }
+        # Whole seconds: the dates of the filter have no fraction, two slices meet on the same second (lt / ge).
+        $whole = { param([datetime]$d) $d.AddTicks(-($d.Ticks % [TimeSpan]::TicksPerSecond)) }
+        $cuts = [Collections.Generic.List[datetime]]::new()
+        if ($p.Count -ge 0) {
+            # Newest first: the date of the message at k*N/n is the lower bound of slice k.
+            for ($k = 1; $k -lt $p.N; $k++) {
+                $d = $dates["cut|$key|$k"]
+                if ($null -eq $d) { continue }
+                $d = & $whole $d
+                if ($d -gt $p.Oldest -and $d -le $p.Newest -and ($cuts.Count -eq 0 -or $d -lt $cuts[-1])) { $cuts.Add($d) }
+            }
+        }
+        else {
+            $from = $p.Oldest; $to = $p.Newest.AddSeconds(1)
+            $step = [Math]::Max([TimeSpan]::TicksPerSecond, [long](($to - $from).Ticks / $p.N))
+            for ($k = $p.N - 1; $k -ge 1; $k--) {
+                $d = & $whole ($from.AddTicks($step * $k))
+                if ($d -gt $from -and $d -lt $to -and ($cuts.Count -eq 0 -or $d -lt $cuts[-1])) { $cuts.Add($d) }
+            }
+        }
+        if (-not $cuts.Count) { continue }
         # The newest and the oldest slice are open (up to the period asked): a message newer or older than the dates
         # read first (arrived since, or one of them left out by Graph) is still read.
-        $list = for ($k = $cuts.Count - 2; $k -ge 0; $k--) {
-            $start = if ($k -eq 0) { $Request.Start } else { $cuts[$k] }
-            $end = if ($k -eq $cuts.Count - 2) { $Request.End } else { $cuts[$k + 1] }
-            Get-MmrMessageFilter -Start $start -End $end -Subject $Request.Subject
+        $list = [Collections.Generic.List[object]]::new()
+        for ($k = 0; $k -le $cuts.Count; $k++) {
+            $end = if ($k -eq 0) { $Request.End } else { $cuts[$k - 1] }
+            $start = if ($k -eq $cuts.Count) { $Request.Start } else { $cuts[$k] }
+            $lower = if ($k -eq $cuts.Count) { $(if ($null -ne $Request.Start -and [datetime]$Request.Start -gt $p.Oldest) { [datetime]$Request.Start } else { & $whole $p.Oldest }) } else { $cuts[$k] }
+            $list.Add(@{ Filter = (Get-MmrMessageFilter -Start $start -End $end -Subject $Request.Subject); Start = $start; End = $end; Lower = $lower })
         }
-        $slices[$f.Id] = @($list)
+        $entry.Slices = $list.ToArray()
     }
-    return $slices
+    return $result
 }
 
 function Read-MmrMessages {
     <#
     .SYNOPSIS
         Reads the messages of the folders given (Status '' only), each page written to the part file of its folder (or
-        of its slice: a large folder is read in slices of its dates, Get-MmrFolderSlices).
+        of its slice: a large folder is read in slices of the same number of messages, Get-MmrFolderSlices).
+    .DESCRIPTION
+        While the messages are read, a mailbox whose last lists are read page after page (free slots: Exchange allows
+        4 requests at a time per mailbox) gets one of its slices cut in two (OnIdle): the slice stops at the middle of
+        what is left (the floor of its writer), a new slice reads the older half. The progress is the share of the
+        messages read, folder by folder (the number of messages of the filter when known: $count=true on the first
+        page of each list).
     .PARAMETER PartsPath
         Folder of the part files (one per folder or slice with messages, deleted once the report is written).
     .OUTPUTS
-        Nothing: each folder gets Messages, Pages, Parts (its part files, newest first), Status (Read | Failed) and
-        Detail, its mailbox the counts.
+        Nothing: each folder gets Messages, Pages, Parts (its part files, newest first), Slices, Seconds, Status
+        (Read | Failed) and Detail, its mailbox the counts.
     #>
     [CmdletBinding()]
     param(
@@ -310,50 +365,91 @@ function Read-MmrMessages {
     $zone = Get-MmrTimeZone $Settings.TimeZone
     $filter = Get-MmrMessageFilter -Start $Request.Start -End $Request.End -Subject $Request.Subject
     $noRecipients = -not [bool](Get-MmrProperty $Request 'Recipients')
+    $pageSize = [int]$Settings.PageSize
     $byAddress = @{}
     foreach ($m in $Mailboxes) { $byAddress[$m.Address] = $m }
     $toRead = @($Folders | Where-Object { $_.Status -eq '' })
-    $slices = Get-MmrFolderSlices -Folders $toRead -Request $Request -Settings $Settings -Filter $filter
-    if ($slices.Count) { Write-MmrItem Info ('{0:N0} large folder(s) read in {1:N0} slices of their dates, side by side' -f $slices.Count, (@($slices.Values | ForEach-Object { $_.Count }) | Measure-Object -Sum).Sum) -Icon Folder }
+    $started = [datetime]::UtcNow
+    $plans = Get-MmrFolderSlices -Folders $toRead -Request $Request -Settings $Settings -Filter $filter
+    $sliced = @($plans.Values | Where-Object { $_.Slices.Count -gt 1 })
+    if ($sliced.Count) { Write-MmrItem Info ('{0:N0} large folder(s) read in {1:N0} slices of the same number of messages, side by side' -f $sliced.Count, (@($sliced | ForEach-Object { $_.Slices.Count }) | Measure-Object -Sum).Sum) -Icon Folder }
+    $state = @{ Writers = @{}; Active = @{}; Expected = [double]0; Done = [double]0; Folders = 0; Messages = [long]0; Shown = [datetime]::MinValue; Parts = 0 }
+    $newPart = { $part = Join-Path $PartsPath ('{0:D6}.jsonl' -f $state.Parts); $state.Parts++; $part }
+    # A list of a folder (or of a slice): Lower is the oldest date it can hold ($null: not known, never cut again).
+    $newJob = {
+        param($Folder, [string]$SliceFilter, $Start, $Lower, [string]$Part, [switch]$Count)
+        $url = Get-MmrMessagesUrl -MailboxKey $Folder.MailboxKey -FolderId $Folder.Id -Filter $SliceFilter -PageSize $pageSize -NoRecipients:$noRecipients
+        if ($Count) { $url += '&$count=true' }
+        $job = New-MmrPagedJob -Id "m$($state.Parts)" -Url $url -Tag ([pscustomobject]@{ Folder = $Folder; Part = $Part; Start = $Start; Lower = $Lower; Floor = $null; Last = $null; More = $true; Pages = 0 })
+        if (-not $state.Active.ContainsKey($job.Mailbox)) { $state.Active[$job.Mailbox] = [Collections.Generic.List[object]]::new() }
+        $state.Active[$job.Mailbox].Add($job)
+        $job
+    }
     $jobs = [Collections.Generic.List[object]]::new()
-    $n = 0
     foreach ($f in $toRead) {
-        $filters = @(if ($slices.ContainsKey($f.Id)) { $slices[$f.Id] } else { $filter })
+        $plan = $plans[$f.Id]
         $f.Parts = [Collections.Generic.List[string]]::new()
-        $f.Slices = $filters.Count
         $f.SlicesDone = 0
-        # Messages Graph could not return (left out), or returned without sender and recipients (Step-MmrPagedCut).
-        $f | Add-Member -NotePropertyName Unreadable -NotePropertyValue 0 -Force
-        $f | Add-Member -NotePropertyName Incomplete -NotePropertyValue 0 -Force
-        foreach ($sliceFilter in $filters) {
-            $part = Join-Path $PartsPath ('{0:D6}.jsonl' -f $n)
-            $f.Parts.Add($part)
-            $jobs.Add((New-MmrPagedJob -Id "m$n" -Url (Get-MmrMessagesUrl -MailboxKey $f.MailboxKey -FolderId $f.Id -Filter $sliceFilter -PageSize ([int]$Settings.PageSize) -NoRecipients:$noRecipients) -Tag ([pscustomobject]@{ Folder = $f; Part = $part })))
-            $n++
+        foreach ($p in 'Unreadable', 'Incomplete') { $f | Add-Member -NotePropertyName $p -NotePropertyValue 0 -Force }
+        # Expected: the messages of the filter (-1: not known yet, TotalItems counts instead); Seconds: the time to read it.
+        $f | Add-Member -NotePropertyName Expected -NotePropertyValue $(if ($plan -and $plan.Count -ge 0) { [long]$plan.Count } else { [long]-1 }) -Force
+        $f | Add-Member -NotePropertyName Seconds -NotePropertyValue ([double]0) -Force
+        $f | Add-Member -NotePropertyName Started -NotePropertyValue $null -Force
+        $state.Expected += $(if ($f.Expected -ge 0) { $f.Expected } else { [Math]::Max(0, $f.TotalItems) })
+        if ($plan -and $plan.Slices.Count -gt 1) {
+            $f.Slices = $plan.Slices.Count
+            foreach ($s in $plan.Slices) { $part = & $newPart; $f.Parts.Add($part); $jobs.Add((& $newJob $f $s.Filter $s.Start $s.Lower $part)) }
+        }
+        else {
+            $f.Slices = 1
+            # One list: its first page gives the number of messages of the filter (progress); cut again if large.
+            $lower = if ($plan -and $plan.Oldest) { $(if ($null -ne $Request.Start -and [datetime]$Request.Start -gt $plan.Oldest) { [datetime]$Request.Start } else { $plan.Oldest.AddTicks(-($plan.Oldest.Ticks % [TimeSpan]::TicksPerSecond)) }) } else { $null }
+            $part = & $newPart; $f.Parts.Add($part); $jobs.Add((& $newJob $f $filter $Request.Start $lower $part -Count:($f.Expected -lt 0)))
         }
     }
-    $state = @{ Writers = @{}; Items = [long]0; Done = [double]0; Folders = 0; Messages = [long]0; Shown = [datetime]::MinValue }
-    foreach ($f in $toRead) { $state.Items += [Math]::Max(1, $f.TotalItems) }
+    # The share of the messages read: folder by folder, the messages read (at most those expected); a folder read counts
+    # what it holds. Never more than 100 %, never stuck at 100 % before the end.
+    $expected = { param($f) if ($f.Expected -ge 0) { [double]$f.Expected } else { [double][Math]::Max(0, $f.TotalItems) } }
+    $setExpected = {
+        param($f, [long]$Value)
+        $before = & $expected $f
+        $doneBefore = [Math]::Min([double]$f.Messages, $before)
+        $f.Expected = $Value
+        $after = & $expected $f
+        $state.Expected += $after - $before
+        $state.Done += [Math]::Min([double]$f.Messages, $after) - $doneBefore
+    }
     # The body of each page goes to the compiled writer as it was received (bytes): never through a PowerShell string.
     $onPage = {
         param($Job, $Content)
-        $f = $Job.Tag.Folder
+        $tag = $Job.Tag
+        $f = $tag.Folder
         $w = $state.Writers[$Job.Id]
         if (-not $w) {
-            $w = [MailboxMessageReportNative.PartWriter]::new($Job.Tag.Part, $f.Mailbox, $f.MailboxName, $f.Location, $f.RecoverableItems, $f.Path, $f.Name, $zone)
+            $w = [MailboxMessageReportNative.PartWriter]::new($tag.Part, $f.Mailbox, $f.MailboxName, $f.Location, $f.RecoverableItems, $f.Path, $f.Name, $zone)
+            if ($tag.Floor) { $w.FloorUtc = $tag.Floor }
             $state.Writers[$Job.Id] = $w
         }
         $page = $w.AddPage($Content)
+        if (-not $f.Started -or ($Job.Started -and $Job.Started -lt $f.Started)) { $f.Started = $Job.Started }
+        $limit = & $expected $f
+        $state.Done += [Math]::Min([double]($f.Messages + $page.Rows), $limit) - [Math]::Min([double]$f.Messages, $limit)
         $f.Messages += $page.Rows
         $f.Pages++
         $state.Messages += $page.Rows
-        return $page.NextLink
+        $tag.Pages++
+        if ($w.LastUtc) { $tag.Last = $w.LastUtc }
+        $tag.More = [bool]$page.NextLink
+        if ($page.Total -ge 0 -and $f.Slices -eq 1 -and $tag.Pages -eq 1) { & $setExpected $f $page.Total }
+        # $count was for the first page only.
+        return ($page.NextLink -replace '([?&])(?:\$|%24)count=true&?', '$1' -replace '[?&]$', '')
     }
     $onDone = {
         param($Job, [int]$Status, [string]$Code, [string]$Message)
         $f = $Job.Tag.Folder
         $w = $state.Writers[$Job.Id]
         if ($w) { $w.Dispose(); $state.Writers.Remove($Job.Id) }
+        if ($state.Active.ContainsKey($Job.Mailbox)) { [void]$state.Active[$Job.Mailbox].Remove($Job) }
         $f.Unreadable += $Job.Skipped
         $f.Incomplete += $Job.Partial
         if ($Status -ne 200) {
@@ -362,30 +458,61 @@ function Read-MmrMessages {
             # The content of an expanded folder lives in an auxiliary archive: Graph answers an error for it.
             if ($f.Location -eq 'Archive' -and $Status -ge 500) { $f.Detail += ' (an auto-expanding archive keeps some folders in an auxiliary archive: not supported)' }
         }
-        $state.Done += [Math]::Max(1, $f.TotalItems) / [double]$f.Slices
+        if (-not $f.Started -or ($Job.Started -and $Job.Started -lt $f.Started)) { $f.Started = $Job.Started }
         $f.SlicesDone++
         if ($f.SlicesDone -ge $f.Slices) {
             if ($f.Status -ne 'Failed') {
                 $f.Status = 'Read'
                 $f.Detail = @(
-                    if ($f.Slices -gt 1) { "read in $($f.Slices) slices of its dates" }
+                    if ($f.Slices -gt 1) { "read in $($f.Slices) slices" }
                     if ($f.Unreadable) { "$($f.Unreadable) message(s) left out: Graph cannot return them" }
                     if ($f.Incomplete) { "$($f.Incomplete) message(s) without sender and recipients: Graph cannot return them" }
                 ) -join " $($script:Dot) "
             }
+            if ($f.Started) { $f.Seconds = [Math]::Round(([datetime]::UtcNow - $f.Started).TotalSeconds, 1) }
+            # Read: it holds what was read.
+            & $setExpected $f $f.Messages
             $state.Folders++
         }
     }
+    # A mailbox with free slots: the list of it with the longest period left is cut in two at the middle of that period
+    # (whole seconds); the list in course stops there (the floor of its writer), a new one reads the older half.
+    $onIdle = {
+        param([string]$Mailbox, [int]$Free)
+        $active = $state.Active[$Mailbox]
+        if (-not $active) { return }
+        $best = $null; $span = [TimeSpan]::FromSeconds(2)
+        foreach ($j in $active) {
+            $t = $j.Tag
+            if (-not $t.More -or -not $t.Last -or -not $t.Lower -or $j.Cuts -or $t.Folder.Slices -ge 64) { continue }
+            if (($t.Last - $t.Lower) -gt $span) { $span = $t.Last - $t.Lower; $best = $j }
+        }
+        if (-not $best) { return }
+        $t = $best.Tag
+        $middle = $t.Lower.AddTicks([long]($span.Ticks / 2))
+        $middle = $middle.AddTicks(-($middle.Ticks % [TimeSpan]::TicksPerSecond))
+        if ($middle -le $t.Lower -or $middle -gt $t.Last) { return }
+        $f = $t.Folder
+        $part = & $newPart
+        $f.Parts.Insert($f.Parts.IndexOf($t.Part) + 1, $part)
+        $f.Slices++
+        $new = & $newJob $f (Get-MmrMessageFilter -Start $t.Start -End $middle -Subject $Request.Subject) $t.Start $t.Lower $part
+        # The list in course now holds [middle, its end): a next cut of it starts there.
+        $t.Floor = $middle
+        $t.Start = $middle
+        $t.Lower = $middle
+        if ($state.Writers.ContainsKey($best.Id)) { $state.Writers[$best.Id].FloorUtc = $middle }
+        Write-MmrLog 'INFO' ("{0} {1} {2}: a slice cut at {3:yyyy-MM-dd HH:mm:ss} UTC (free request slots of the mailbox), {4} slices" -f $f.Mailbox, $f.Location, $f.Path, $middle, $f.Slices)
+        $new
+    }
     $onProgress = {
         $now = [datetime]::UtcNow
-        if (($now - $state.Shown).TotalMilliseconds -lt 200) { return }
+        if (($now - $state.Shown).TotalMilliseconds -lt $script:MmrProgressMilliseconds) { return }
         $state.Shown = $now
-        # Folders done by their items, plus the messages already read of the lists in course.
-        $running = [long]0
-        foreach ($id in $state.Writers.Keys) { $w = $state.Writers[$id]; $running += $w.Count }
-        Write-MmrProgress ([Math]::Min(1.0, ($state.Done + $running) / [Math]::Max(1, $state.Items))) ('{0:N0}/{1:N0} folders read {2} {3:N0} messages' -f $state.Folders, $toRead.Count, $script:Dot, $state.Messages)
+        $rate = $state.Messages / [Math]::Max(1.0, ($now - $started).TotalSeconds)
+        Write-MmrProgress ([Math]::Min(1.0, $state.Done / [Math]::Max(1.0, $state.Expected))) ('{0:N0}/{1:N0} folders read {2} {3:N0} messages {2} {4:N0} a second' -f $state.Folders, $toRead.Count, $script:Dot, $state.Messages, $rate)
     }
-    try { Invoke-MmrGraphPaged -Jobs $jobs.ToArray() -OnPage $onPage -OnDone $onDone -OnProgress $onProgress }
+    try { Invoke-MmrGraphPaged -Jobs $jobs.ToArray() -OnPage $onPage -OnDone $onDone -OnProgress $onProgress -OnIdle $onIdle }
     finally {
         foreach ($w in @($state.Writers.Values)) { $w.Dispose() }
         $state.Writers.Clear()
@@ -402,8 +529,22 @@ function Read-MmrMessages {
         }
         elseif ($f.Status -eq 'Failed') { $m.FoldersFailed++ }
     }
+    # ---- the speed, for the log and the console ---------------------------------------------------------------------
+    $seconds = ([datetime]::UtcNow - $started).TotalSeconds
+    $read = @($toRead | Where-Object { $_.PSObject.Properties['Started'] -and $_.Started })
+    Write-MmrLog 'INFO' ('Messages: {0:N0} in {1} ({2:N0} a second)' -f $state.Messages, (Format-MmrDuration $seconds), ($state.Messages / [Math]::Max(0.1, $seconds)))
+    foreach ($g in @($read | Group-Object Mailbox | Sort-Object { ($_.Group | Measure-Object Messages -Sum).Sum } -Descending | Select-Object -First 10)) {
+        $first = ($g.Group | Measure-Object -Property Started -Minimum).Minimum
+        $last = ($g.Group | ForEach-Object { $_.Started.AddSeconds($_.Seconds) } | Measure-Object -Maximum).Maximum
+        $span = [Math]::Max(0.1, ($last - $first).TotalSeconds)
+        $count = ($g.Group | Measure-Object Messages -Sum).Sum
+        Write-MmrLog 'INFO' ('Mailbox {0}: {1:N0} messages in {2} ({3:N0} a second), {4} folder(s)' -f $g.Name, $count, (Format-MmrDuration $span), ($count / $span), $g.Count)
+    }
+    foreach ($f in @($read | Where-Object Messages | Sort-Object Seconds -Descending | Select-Object -First 5)) {
+        Write-MmrLog 'INFO' ('Slow folder {0} {1} {2}: {3:N0} messages in {4} ({5:N0} a second), {6} slice(s), {7} page(s)' -f $f.Mailbox, $f.Location, $f.Path, $f.Messages, (Format-MmrDuration $f.Seconds), ($f.Messages / [Math]::Max(0.1, $f.Seconds)), $f.Slices, $f.Pages)
+    }
+    if ($state.Messages) { Write-MmrItem Info ('{0:N0} messages read in {1}: {2:N0} a second' -f $state.Messages, (Format-MmrDuration $seconds), ($state.Messages / [Math]::Max(0.1, $seconds))) -Icon Clock }
 }
-
 function Get-MmrCounts {
     <# The totals of some mailboxes and their folders (the run, or one mailbox for its own report). #>
     param([AllowEmptyCollection()][object[]]$Mailboxes, [AllowEmptyCollection()][object[]]$Folders)

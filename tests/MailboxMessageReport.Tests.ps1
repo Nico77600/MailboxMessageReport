@@ -3,7 +3,7 @@
 <#
     Mailbox Message Report - automated tests (Pester 6.1 or later).
     Author  : Nicolas Fabert
-    Version : 2.0.0
+    Version : 2.1.0
 
     Run:  .\Run-Tests.ps1      (or Invoke-Pester -Path .\tests -Output Detailed)
 
@@ -54,12 +54,12 @@ BeforeAll {
     # The messages of a HTML report: its compressed blocks (gzip, base64) decoded, their columns and dictionaries joined.
     function Read-TestHtml([string]$Path) {
         $html = Get-Content -LiteralPath $Path -Raw
-        $r = [pscustomobject]@{ Html = $html; Blocks = 0; Rows = 0; Folders = @(); Subjects = @(); People = @(); To = @(); Recipients = @(); Ids = @(); Summary = $null }
+        $r = [pscustomobject]@{ Html = $html; Blocks = 0; Rows = 0; Folders = @(); Subjects = @(); People = @(); To = @(); Recipients = @(); Ids = @(); Flags = @(); Summary = $null }
         foreach ($b in [regex]::Matches($html, '<script type="application/x-mmr-block">(.*?)</script>')) {
             $gzip = [IO.Compression.GZipStream]::new([IO.MemoryStream]::new([Convert]::FromBase64String($b.Groups[1].Value)), [IO.Compression.CompressionMode]::Decompress)
             $reader = [IO.StreamReader]::new($gzip); $c = $reader.ReadToEnd() | ConvertFrom-Json -Depth 10; $reader.Dispose()
             $r.Blocks++; $r.Rows += @($c.f).Count
-            $r.Folders += @($c.df); $r.Subjects += @($c.dj); $r.People += @($c.dp); $r.To += @($c.tl); $r.Recipients += @($c.ri); $r.Ids += @($c.m)
+            $r.Folders += @($c.df); $r.Subjects += @($c.dj); $r.People += @($c.dp); $r.To += @($c.tl); $r.Recipients += @($c.ri); $r.Ids += @($c.m); $r.Flags += @($c.x)
         }
         $r.Summary = [regex]::Match($html, '<script type="application/json" id="data-summary">(.*?)</script>', 'Singleline').Groups[1].Value | ConvertFrom-Json
         return $r
@@ -83,7 +83,7 @@ BeforeAll {
         $null = Add-FakeFolder 'alice@contoso.test' -Path '\Inbox'
         $null = Add-FakeFolder 'alice@contoso.test' -Path '\Sent Items'
         $null = Add-FakeMessage 'alice@contoso.test' -Path '\Inbox' -Subject 'Contrat Alpha - v3' -Received '2026-03-10T09:00:00' -To 'alice@contoso.test' -Cc 'dan@contoso.test' -Attachments
-        $null = Add-FakeMessage 'alice@contoso.test' -Path '\Inbox' -Subject 'Weekly status' -Received '2026-04-01T08:00:00' -To 'alice@contoso.test'
+        $null = Add-FakeMessage 'alice@contoso.test' -Path '\Inbox' -Subject 'Weekly status' -Received '2026-04-01T08:00:00' -To 'alice@contoso.test' -Unread
         $null = Add-FakeMessage 'alice@contoso.test' -Path '\Inbox\Projects\Alpha' -Subject 'Projet Alpha: kick-off' -Received '2025-11-05T14:00:00' -To 'alice@contoso.test', 'bob@contoso.test'
         $null = Add-FakeMessage 'alice@contoso.test' -Path '\Sent Items' -Subject 'RE: Contrat Alpha' -Received '2026-03-11T10:00:00' -From 'alice@contoso.test' -To 'ext@fabrikam.test' -Bcc 'boss@contoso.test'
         $null = Add-FakeMessage 'alice@contoso.test' -Location Archive -Path '\Inbox' -Subject 'Contrat Alpha - v1' -Received '2019-02-01T09:00:00' -To 'alice@contoso.test'
@@ -107,7 +107,7 @@ Describe 'Configuration and request' {
         $c.Locations | Should -Be @('Primary', 'Archive')
         $c.RecoverableItems | Should -BeFalse
         $c.PageSize | Should -Be 250
-        $c.SplitFolderItems | Should -Be 5000
+        $c.SplitFolderItems | Should -Be 2000
         $c.Recipients | Should -BeTrue
         $c.ReportLayout | Should -Be 'Global'
         $c.HtmlMaxMessages | Should -Be 500000
@@ -345,9 +345,15 @@ Describe 'Folders and messages' {
         $null = Add-FakeMessage 'big@contoso.test' -Path '\Inbox' -Subject 'Small' -Received '2026-01-01'
         $s = Find-Test 'big@contoso.test' -Overrides @{ SplitFolderItems = 30; PageSize = 10 }
         $f = $s.Result.Folders | Where-Object { $_.Location -eq 'Archive' -and $_.Path -eq '\Inbox' }
-        $f.Slices | Should -Be 5
+        $f.Slices | Should -BeGreaterOrEqual 5
         $f.Messages | Should -Be 130
-        $f.Detail | Should -Be 'read in 5 slices of its dates'
+        $f.Detail | Should -Be "read in $($f.Slices) slices"
+        # Slices of the same number of messages: the dates of the messages at 26, 52, 78 and 104 (newest first).
+        foreach ($skip in 26, 52, 78, 104) { @($script:Fake.Calls | Where-Object { $_.Url -match "\`$top=1&" -and $_.Url -match "\`$skip=$skip(&|$)" }).Count | Should -Be 1 }
+        # The message at a cut opens the slice above it: 27 at most.
+        @($f.Parts | ForEach-Object { @(Get-Content -LiteralPath $_).Count } | Where-Object { $_ -gt 27 }).Count | Should -Be 0
+        $f.Expected | Should -Be 130
+        $f.Seconds | Should -BeGreaterOrEqual 0
         ($s.Result.Folders | Where-Object Location -eq 'Primary').Slices | Should -Be 1
         $script:Fake.MaxOpen[$script:Fake.Users[0].ArchiveKey.ToLowerInvariant()] | Should -Be 4
         $rows = @(Read-TestCsv (Export-Test $s).Files.Messages | Where-Object Location -eq 'Archive')
@@ -358,6 +364,49 @@ Describe 'Folders and messages' {
         # With a subject: the slices keep it, after their dates.
         $sub = (Find-Test 'big@contoso.test' -More @{ Subject = 'Message 1' } -Overrides @{ SplitFolderItems = 30 }).Result
         ($sub.Folders | Where-Object { $_.Location -eq 'Archive' -and $_.Path -eq '\Inbox' }).Messages | Should -Be 42   # Message 1, 10 to 19, 100 to 130
+    }
+
+    It 'cuts a folder whose messages came in a few days into slices of the same number of messages' {
+        Reset-FakeTenant -TenantId $script:Tenant
+        $null = Add-FakeUser 'room@contoso.test'
+        # 100 meeting messages in one hour, 20 over six years: equal periods would put 100 in one slice.
+        foreach ($j in 1..100) { $null = Add-FakeMessage 'room@contoso.test' -Path '\Deleted Items' -Subject "Meeting $j" -Received ([datetime]'2026-07-12T08:00:00').AddSeconds($j * 30) -To 'room@contoso.test' }
+        foreach ($j in 1..20) { $null = Add-FakeMessage 'room@contoso.test' -Path '\Deleted Items' -Subject "Old $j" -Received ([datetime]'2020-01-01').AddDays($j * 100) -To 'room@contoso.test' }
+        $s = Find-Test 'room@contoso.test' -Overrides @{ SplitFolderItems = 30; PageSize = 10 }
+        $f = $s.Result.Folders | Where-Object Path -eq '\Deleted Items'
+        $f.Messages | Should -Be 120
+        foreach ($skip in 30, 60, 90) { @($script:Fake.Calls | Where-Object { $_.Url -match "\`$top=1&" -and $_.Url -match "\`$skip=$skip(&|$)" }).Count | Should -Be 1 }
+        @($f.Parts | ForEach-Object { @(Get-Content -LiteralPath $_).Count } | Where-Object { $_ -gt 31 }).Count | Should -Be 0
+        ($script:Fake.MaxOpen.Values | Measure-Object -Maximum).Maximum | Should -Be 4
+        $rows = @(Read-TestCsv (Export-Test $s).Files.Messages)
+        @($rows.ItemId | Select-Object -Unique).Count | Should -Be 120
+        ($rows.ReceivedUtc -join ',') | Should -Be (($rows.ReceivedUtc | Sort-Object -Descending) -join ',')
+    }
+
+    It 'cuts a slice again while it is read when its mailbox has free slots; the progress is the share of the messages read' {
+        Reset-FakeTenant -TenantId $script:Tenant
+        $null = Add-FakeUser 'room@contoso.test'
+        foreach ($j in 1..100) { $null = Add-FakeMessage 'room@contoso.test' -Path '\Deleted Items' -Subject "Meeting $j" -Received ([datetime]'2026-07-12T08:00:00').AddSeconds($j * 30) -To 'room@contoso.test' }
+        foreach ($j in 1..20) { $null = Add-FakeMessage 'room@contoso.test' -Path '\Deleted Items' -Subject "Old $j" -Received ([datetime]'2020-01-01').AddDays($j * 100) -To 'room@contoso.test' }
+        # Without $count, the folder is cut in equal periods: almost every message in one slice, cut again while read.
+        $script:Fake.NoCount = $true
+        $progress = [Collections.Generic.List[double]]::new()
+        & $script:Module { param($p) $script:MmrProgressMilliseconds = 0; $script:Ui = @{ Cancel = $false; Queue = $null; Pump = $null; Sink = { param($Status, $Text) if ($Status -eq 'Progress' -and $Text -match 'messages') { $p.Add([double]::Parse(($Text -split '\|')[0], [Globalization.CultureInfo]::InvariantCulture)) } }.GetNewClosure() } } $progress
+        try { $s = Find-Test 'room@contoso.test' -Overrides @{ SplitFolderItems = 30; PageSize = 10 } }
+        finally { & $script:Module { $script:Ui = $null; $script:MmrProgressMilliseconds = 200 } }
+        $f = $s.Result.Folders | Where-Object Path -eq '\Deleted Items'
+        $f.Messages | Should -Be 120
+        $f.Slices | Should -BeGreaterThan 4
+        $f.Detail | Should -Be "read in $($f.Slices) slices"
+        ($script:Fake.MaxOpen.Values | Measure-Object -Maximum).Maximum | Should -Be 4
+        $rows = @(Read-TestCsv (Export-Test $s).Files.Messages)
+        $rows.Count | Should -Be 120
+        @($rows.ItemId | Select-Object -Unique).Count | Should -Be 120
+        ($rows.ReceivedUtc -join ',') | Should -Be (($rows.ReceivedUtc | Sort-Object -Descending) -join ',')
+        # Never above 100 %, 100 % at the end only, values in between on the way (1.x: stuck at 100 %).
+        $progress | ForEach-Object { $_ | Should -BeLessOrEqual 1.0 }
+        $progress[-1] | Should -Be 1.0
+        @($progress | Where-Object { $_ -gt 0.05 -and $_ -lt 0.95 }).Count | Should -BeGreaterThan 2
     }
 
     It 'reads the messages without their recipients when asked' {
@@ -463,6 +512,10 @@ Describe 'Report' {
         $html.Subjects | Should -Contain '=SUM(A1:A9) <script>alert(1)</script>'
         @($html.Folders | Where-Object { $_[4] -eq '\Deletions' }).Count | Should -Be 0
         @($html.Folders | Where-Object { $_[4] -eq '\Recoverable Items\Deletions' -and $_[3] -eq '1' }).Count | Should -Be 2
+        # The read state: flag 2 of each message in the page (the Read column and filter), IsRead in the CSV file.
+        $html.Html | Should -Match 'id="f-read"'
+        @($html.Flags | Where-Object { $_ -band 2 }).Count | Should -Be 11
+        @(Read-TestCsv $report.Files.Messages | Where-Object IsRead -eq 'No').Subject | Should -Be 'Weekly status'
         $summary = Get-Content $report.Files.Summary -Raw | ConvertFrom-Json
         $summary.Counts.Messages | Should -Be 12
         $summary.Counts.RecoverableMessages | Should -Be 2

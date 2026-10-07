@@ -1,7 +1,7 @@
 ---
 title: Mailbox Message Report
 subtitle: Developer guide
-version: 2.0.0
+version: 2.1.0
 author: Nicolas Fabert
 updated: 2026-10-07
 ---
@@ -27,8 +27,8 @@ archive | The archive, through Graph | Microsoft Graph gives the ID of the archi
 mail | Every message, its people | Received and sent, subject, sender, To, Cc, Bcc, Internet message ID, folder and path — and where it is: primary mailbox, archive, Recoverable Items.
 filter | A period, some subjects | `-Start` / `-End` on the received date, `-Subject` (any of them), folders left out. Filtered by Exchange, not after reading.
 people | One mailbox or thousands | `-Mailbox` or a list (text or CSV); one report for all of them, one per mailbox, or both.
-clock | Large mailboxes | 4 lists at a time per mailbox, a large folder read in slices of its dates; pages written to disk at once: the memory does not grow with the messages.
-shield | Read only, least rights | `Mail.ReadBasic.All` (never the body) and `User.Read.All`. Nothing is changed in any mailbox.
+clock | Large mailboxes | 4 lists at a time per mailbox, a large folder read in slices of the same number of messages, cut again while read; pages written to disk at once: the memory does not grow with the messages.
+shield | Read only, least rights | `Mail.ReadBasic.All` and `User.Read.All` (`Mail.Read` only for the content in the window). Nothing is changed in any mailbox.
 ```
 
 ## Quick start
@@ -80,7 +80,7 @@ file | Report | CSV, HTML, JSON
 | **Mailboxes** | Each address of the request (typed, or a text or CSV file) is looked up in the directory — any SMTP alias, then the UPN — for its user ID and display name. |
 | **Archive** | `GET /beta/users/{id}/settings/exchange` gives `primaryMailboxId` and, when the user has one, `inPlaceArchiveMailboxId` = `MBX:<ArchiveGuid>@<tenant ID>`. A CSV list can give the `ArchiveGuid` instead. A mailbox on-premises or inactive answers *MailboxNotEnabledForRESTAPI*: it is reported, not read. |
 | **Folders** | `GET .../mailFolders/delta`: every mail folder of the primary mailbox and of the archive, flat, 200 a page, with its parent and its number of items; the path of each folder is rebuilt from its parents (`\Inbox\Projects\Alpha`). Recoverable Items: the folders under `recoverableitemsroot`. A folder without items, or left out (`-ExcludeFolder`), is not read. |
-| **Messages** | Each folder, page after page: `$select` the columns of the report, `$filter` the period and the subjects, `$orderby` the received date (newest first). A folder of more than 5,000 items is cut into slices of its dates, read side by side. Each page goes to the part file of its folder at once. |
+| **Messages** | Each folder, page after page: `$select` the columns of the report, `$filter` the period and the subjects, `$orderby` the received date (newest first). A folder of more than 2,000 messages is cut into slices of the same number of messages, read side by side, and a slice is cut again while it is read when its mailbox has free request slots. Each page goes to the part file of its folder at once. |
 | **Report** | The part files are merged in the order of the report — mailbox, primary mailbox then archive, Recoverable Items last, folder path, newest first — into the CSV file(s), the HTML report(s) and `Summary.json`; then they are deleted. A daily log. |
 
 At most 16 requests are in flight, and 4 at a time for one mailbox (a limit of Exchange Online); a primary mailbox and its archive are two mailboxes. A 429 or 5xx answer is retried after its *Retry-After* delay. A page that Exchange Online cuts short (a 200 whose JSON ends early) is asked again, smaller (chapter 4).
@@ -134,7 +134,15 @@ Get-EXOMailbox -ResultSize Unlimited -Archive -Properties ArchiveGuid |
 > [!NOTE]
 > **Exchange and `contains()`.** Exchange refuses a filter on the subject before a condition on the date, and refuses `contains()` with `$orderby` alone (*InefficientFilter: The restriction or sort order is too complex for this operation*, measured). The tool always writes the date first; with subjects and no start date, the filter starts with `receivedDateTime ge 1900-01-01T00:00:00Z`.
 
-**A large folder.** A folder of more than `Graph.SplitFolderItems` items (5,000) is read in slices of its received dates: its oldest and newest message (of the filter) are read first, one message each; the period between them is cut in equal parts, one per 5,000 items, 16 at most; the slices are read side by side, 4 at a time for one mailbox, each page after page. Every message is read once (two slices meet on the same second, `lt` / `ge`), and the report keeps the order of the folder, newest first. The newest slice has no end and the oldest no start (but those of the period asked): a message newer or older than the two read first is read as well.
+**A large folder.** The pages of one list come one after the other, and Exchange Online answers 4 requests at a time for one mailbox: a large folder is read in **slices**, side by side. A folder of more than `Graph.SplitFolderItems` messages (2,000) is cut into slices of **the same number of messages**, one per 2,000, 16 at most:
+
+1. its newest message, with the number of messages of the filter (`$top=1&$count=true`), and its oldest message;
+2. the received date of the message at 1/n, 2/n... of the folder, newest first (`$top=1&$skip=k·N/n`): each date is the lower bound of a slice (`ge`), the upper bound of the next one (`lt`);
+3. a folder whose number is not known is cut in equal periods between its oldest and newest message.
+
+Then, **while the messages are read**, a mailbox whose last lists are read page after page (it has free request slots) gets the list with the longest period left cut in two at the middle of that period: the list in course stops there (rows older than the cut are not written, its next pages are not asked), a new slice reads the older half (64 slices per folder at most; each cut is in the log). Every message is read once (two slices meet on the same second), and the report keeps the order of the folder, newest first. The newest slice has no end and the oldest no start (but those of the period asked): a message newer or older than the dates read first is read as well.
+
+Version 2.0 and before cut the period in equal parts: a folder of meeting messages of a room had 39,372 of its 39,419 messages in 3 days of a period of 6 months — one slice held almost all of them, read one page after the other, one request at a time (14 min 06 s with the recipients). Cut by number and again while read: 3 min 08 s, 3.9 requests at a time on average (chapter 13).
 
 **A page cut short.** Exchange Online sometimes answers a page of messages with a status 200 and a JSON that stops early (seen on a customer tenant: 410 bytes, the end of `"value":[`, on a slice of a large folder): a page that took it too long (the recipients of meeting messages are read one by one), or a message it cannot return. The run goes on (version 1.0.0 stopped with *Expected depth to be zero at the end of the JSON payload*): the page is asked again once; then with half as many messages, down to one (the next pages grow back to `Graph.PageSize`); then that one message without its sender and recipients; at last it is left out (`$skip`) and the list goes on. Each step is in the log (*Graph answered a page cut short*); a message left out or without its sender and recipients is counted in the *Folders* tab (*Detail*) and the run finishes with warnings (exit code 2). A list of folders cut short is asked again up to `Graph.MaxRetries` times.
 
@@ -242,7 +250,7 @@ Get-ChildItem 'C:\Tools\MailboxMessageReport' -Recurse -File -Force | Unblock-Fi
 | `Search.MailboxFile` | | Default list of mailboxes when `-Mailbox` is not given. |
 | `Graph.MaxConcurrency` | `16` | Requests in flight (1-32); 4 at most per mailbox in any case. |
 | `Graph.PageSize` | `250` | Messages per page (10-1000). |
-| `Graph.SplitFolderItems` | `5000` | A folder with more items is read in slices of its dates (`0` = never). |
+| `Graph.SplitFolderItems` | `2000` | A folder with more messages is read in slices of this number of messages, 16 at most, cut again while read (`0` = never; chapter 4). |
 | `Graph.MaxRetries` · `TimeoutSeconds` | `6` · `120` | Retries of a 429 or 5xx (after *Retry-After*); timeout of a request. |
 | `Report.OutputPath` · `FilePrefix` · `Formats` | `.\reports` · `MailboxMessageReport` · `Csv`, `Html` | Report files (a `Summary.json` is always written). |
 | `Report.Layout` | `Global` | `Global` (one report for every mailbox), `PerMailbox` (one per mailbox, in `Mailboxes\`, plus a summary with a link to each) or `Both`. |
@@ -294,7 +302,7 @@ A list of mailboxes (`-MailboxFile`, `Search.MailboxFile`, *Load a list...* in t
 .\Invoke-MailboxMessageReport.ps1 -Mailbox room-paris-01@contoso.com -SkipRecipients -ExcludeFolder '\Deleted Items'
 ```
 
-The console shows the steps (Microsoft Graph, mailboxes, folders, messages, report), a progress line with the time left, and a summary. Exit code: **0** completed, **2** finished with warnings (a mailbox or a folder not read, an archive not known), **1** failed.
+The console shows the steps (Microsoft Graph, mailboxes, folders, messages, report), a progress line — the share of the messages read (the number of messages of the filter of each list, from `$count` on its first page), the folders read, the messages, their number a second and the time left — and a summary. Exit code: **0** completed, **2** finished with warnings (a mailbox or a folder not read, an archive not known), **1** failed.
 
 <!-- icon: play -->
 ## 9. Window
@@ -328,11 +336,12 @@ The HTML report is one file, without any external resource: it can be sent alone
 - **Header**: the mailboxes, where and what was read, the status, the time zone, the duration; four tiles — messages, primary mailbox, archive, Recoverable Items (or the folders not read) — and a bar of the three locations.
 - **Search**: the mailboxes, the period and the subjects, where, the application and its permissions.
 - **Messages**: every message (up to `Report.HtmlMaxMessages`, 500,000), in a table that draws only the rows on the screen: it scrolls through hundreds of thousands of messages at once.
-  - **Filters**, together: a search in every field (subject, addresses and names, folder, mailbox, message ID), the mailbox, the location (primary mailbox, archive, Recoverable Items of each), the folder (part of its path), the sender, the subject, a recipient (To, Cc or Bcc), the Internet message ID, the received dates, a minimum of recipients, with attachments only. The number of messages of the view is shown at all times.
-  - **Sort**: a click on a column (received, mailbox, location, folder, from, subject, to, recipients, attachments), again to reverse it; *Clear filters* comes back to the order of the report (mailbox, primary mailbox then archive, folder, newest first).
+  - **Filters**, together: a search in every field (subject, addresses and names, folder, mailbox, message ID), the mailbox, the location (primary mailbox, archive, Recoverable Items of each), the folder (part of its path), the sender, the subject, a recipient (To, Cc or Bcc), the Internet message ID, the received dates, a minimum of recipients, read or unread, with attachments only. The number of messages of the view is shown at all times.
+  - **Columns**: received, mailbox, location, folder, from, subject, to, recipients, attachments, **read** (*No* in colour; the subject of an unread message in bold, as in Outlook).
+  - **Sort**: a click on a column, again to reverse it; *Clear filters* comes back to the order of the report (mailbox, primary mailbox then archive, folder, newest first).
   - **A message**: a click (or *Enter*) opens it — mailbox, location, folder, received (time zone of the report and UTC), sent, from, *Sender* when sent on behalf, Internet message ID, attachments, importance, read, type, and **every recipient**, To, Cc and Bcc in lists of their own with *Copy* (10,000 recipients as well).
   - **Export the view to CSV**: the messages of the view, in the order shown, with the columns of the CSV file of the report (but the item ID).
-- **Folders**: every folder of every mailbox read: location, path, items, messages found, status (*Read*, *Empty*, *Excluded*, *Failed* with the reason; *read in N slices* for a large folder).
+- **Folders**: every folder of every mailbox read: location, path, items, messages found, the time to read it (*Read in*), status (*Read*, *Empty*, *Excluded*, *Failed* with the reason; *read in N slices* for a large folder).
 - **Mailboxes**: status (*Read*, *Partial*, *Not read* and why), archive (*Yes* from Graph or from the list, *No*, *Unknown*), messages per location; with the *PerMailbox* layout, the link to the report and the CSV file of each mailbox.
 
 | Mailbox status | Meaning |
@@ -351,7 +360,7 @@ Each run writes a new folder under `reports\`, `MailboxMessageReport_<yyyyMMdd-H
 | `MailboxMessageReport.html` | The report (chapter 10). *PerMailbox* layout: the summary, the folders and the mailboxes with the link to each report. |
 | `MailboxMessageReport-Messages.csv` | *Global* and *Both*: every message of every mailbox, in the order of the report. UTF-8 with BOM, separator `;`: opens in Excel. Columns: Mailbox, MailboxName, Location, RecoverableItems, FolderPath, Folder, Received, Sent, Subject, From, FromName, Sender, To, Cc, Bcc, **RecipientCount** (To + Cc + Bcc; empty with `-SkipRecipients`), InternetMessageId, HasAttachments, Importance, IsRead, Type, ReceivedUtc, ItemId. |
 | `MailboxMessageReport-Mailboxes.csv` | One row per mailbox: status, archive, folders, messages per location, notes. |
-| `MailboxMessageReport-Folders.csv` | One row per folder: mailbox, location, Recoverable Items, path, items, messages found, status. |
+| `MailboxMessageReport-Folders.csv` | One row per folder: mailbox, location, Recoverable Items, path, items, messages found, *Seconds* (the time to read it), status. |
 | `MailboxMessageReport-Summary.json` | The whole result (request, application, mailboxes, folders, counts), for scripts. |
 | `Mailboxes\MailboxMessageReport-<address>.csv` · `.html` | *PerMailbox* and *Both*: the messages of one mailbox (a mailbox not read has none). |
 | `.parts\` | While reading only: the messages of each folder as they arrive; deleted once the report is written. |
@@ -372,12 +381,12 @@ A cell starting with `=`, `+`, `-` or `@` is prefixed with an apostrophe in the 
 | `src\MailboxMessageReport.Config.ps1` | Configuration, request, dates and time zone, lists of mailboxes. |
 | `src\MailboxMessageReport.Graph.ps1` | Token (certificate assertion or secret), tenant and permission checks, transport, `$batch` scheduler, page reader. |
 | `src\MailboxMessageReport.Mailboxes.ps1` | The user of each address, its primary mailbox and its archive (`settings/exchange`, or the `ArchiveGuid` of the list). |
-| `src\MailboxMessageReport.Search.ps1` | Folders (delta, Recoverable Items, paths), the filter, the slices of a large folder, the messages to part files, the counts. |
+| `src\MailboxMessageReport.Search.ps1` | Folders (delta, Recoverable Items, paths), the filter, the slices of a large folder (by number, cut again while read), the messages to part files, the progress, the speed, the counts. |
 | `src\MailboxMessageReport.Report.ps1` · `templates\Report.template.html` | CSV, JSON and HTML, global or per mailbox. |
 | `src\MailboxMessageReport.Gui.ps1` | WPF window with the Fluent theme; the run in a background runspace. |
 | `src\MailboxMessageReport.Native.cs` | Compiled helper (C#, built by `Add-Type` when the module loads): the body of a Graph answer as bytes, a page of messages to rows, the part files, the CSV writer (cells within an Excel cell), the HTML report (`HtmlReport`), the rows of the window. |
 
-**Graph requests.** Small requests (users, archive IDs) go through `$batch` calls of 20 (`Invoke-MmrGraphBatch`, beta for `settings/exchange`). Lists (folders, messages) are read by `Invoke-MmrGraphPaged`: each page a request of its own (a page of messages is large), 16 in flight, 4 at a time per mailbox; the lists of each mailbox wait in a queue of their own and the mailboxes are served in turn, so that thousands of folders are scheduled at the same cost as a few; the next page of a list goes first (a folder is finished before the next one starts).
+**Graph requests.** Small requests (users, archive IDs) go through `$batch` calls of 20 (`Invoke-MmrGraphBatch`, beta for `settings/exchange`). Lists (folders, messages) are read by `Invoke-MmrGraphPaged`: each page a request of its own (a page of messages is large), 16 in flight, 4 at a time per mailbox; the lists of each mailbox wait in a queue of their own and the mailboxes are served in turn, so that thousands of folders are scheduled at the same cost as a few; the next page of a list goes first (a folder is finished before the next one starts). When a mailbox has request slots that nothing waits for, the scheduler asks the caller for more work (`-OnIdle`): `Read-MmrMessages` cuts one of its slices in two (the floor of its `PartWriter`, a new part file inserted after it). The time of each page is measured: the log gives the average and longest page and the requests in flight on average.
 
 **Pages to disk.** The body of a page is read as bytes (`Body`) and given to the compiled `PartWriter` of its folder, which parses it (`System.Text.Json`) and appends one JSON array per message to the part file: the memory does not grow with the messages. A page never goes through a PowerShell string: a .NET method called from PowerShell with a string of 1 MB costs about 100 ms (the argument is scanned), measured while building the tool. The report merges the part files in order (`Merge.AppendPart`) into the CSV files, the HTML reports and the preview of the window.
 
@@ -396,8 +405,10 @@ A cell starting with `=`, `+`, `-` or `@` is prefixed with an apostrophe in the 
 | A page of 1,000 messages of that folder: subject, dates, message ID, sender | 0.4 to 0.5 s |
 | The same page with To, Cc and Bcc | **28.5 s**: Exchange reads the recipients of each message |
 | 3 mailboxes, 2 archives, Recoverable Items, 2 subjects | 963 messages in about 8 s |
+| The room mailbox, *Deleted Items* (39,372 of 39,419 messages in 3 days of 6 months), period of 6 months, with the recipients: 2.0.0 (8 slices of equal periods, 7 of them with 0 to 30 messages) | **14 min 06 s**, 1 request at a time at the end (one slice of almost every message) |
+| The same with 2.1.0 (16 slices of the same number, cut again 12 times while read) | **3 min 08 s** (214 a second), 3.9 requests at a time on average, a page of 250 in 4 s; 39,414 messages, each once, newest first |
 
-The time of a run is the time of Exchange Online: about 2 to 10 ms per message without recipients, up to 30 ms with them in a folder of meeting messages, 4 lists at a time per mailbox and 16 in all. Many mailboxes are read side by side; a large folder is cut into slices of its dates so that it is read 4 slices at a time instead of page after page.
+The time of a run is the time of Exchange Online: about 2 to 10 ms per message without recipients, up to 30 ms with them in a folder of meeting messages, 4 lists at a time per mailbox and 16 in all. Many mailboxes are read side by side; a large folder is cut into slices of the same number of messages, cut again while read, so that every mailbox keeps its 4 requests busy until its last messages. The log of a run gives the speed (*Graph: ... a page 4.0 s on average, 15.5 s at most, 3.9 requests at a time*, *Messages: 39,414 in 3 min 04 s (214 a second)*, one line per mailbox and the 5 slowest folders): fewer than 4 requests at a time per mailbox read means few large folders, more than 1 s a page means Exchange (recipients, meeting messages).
 
 On the computer, once Graph has answered (`tools\Measure-MailboxMessageReport.ps1`: synthetic messages in pages of 1,000, every message ID unique, subjects, senders and recipients of 300 people; Microsoft Edge for the page, measured 2026-10-07):
 
@@ -429,7 +440,7 @@ pwsh -File .\tools\Measure-MailboxMessageReport.ps1 -Messages 1000000 -HtmlMaxMe
 .\Run-Tests.ps1      # Pester 6.1+, simulated tenant, no network
 ```
 
-`tests\MailboxMessageReport.FakeGraph.ps1` replaces the transport with a simulated Exchange Online that behaves like the lab: `settings/exchange` in beta (the archive ID, *MailboxNotEnabledForRESTAPI* for a mailbox on-premises), a mailbox opened by its user ID, any alias or its `MBX:` ID, the folder tree of `mailFolders/delta` in pages (`Prefer: odata.maxpagesize`), Recoverable Items, the messages filtered by date and subject with `contains()` refused before the date (*InefficientFilter*), `$select`, `$orderby` ascending or descending, `$top` / `$skip` and their nextLink, pages cut short (a message Exchange cannot return, with or without its recipients; pages too large; once), `$batch` in v1.0 and beta, one message by its ID with its body as text (`Prefer: outlook.body-content-type="text"`), 429 and failures on demand; every request is recorded with the most requests in flight per mailbox. The tests cover the configuration, the lists of mailboxes (text, CSV, `ArchiveGuid`), the request and the filter, the connection and the permissions, the mailboxes (alias, archive from Graph or from the list, on-premises, not a mailbox, twice under two aliases), the folders (paths, Recoverable Items, empty, left out), the messages (period, subjects, columns, time zone, order, pages, 4 per mailbox, slices of a large folder, without recipients, 429 retried, a folder that fails, pages cut short asked again smaller and a message Graph cannot return left out), *Stop*, the report (global, per mailbox, both, CSV safe for Excel, HTML safe, every message in the compressed blocks of the HTML report decoded as the page does, the most messages of a page, a message of 10,000 recipients: its cell cut for Excel, *RecipientCount*, every recipient in the HTML report, `Summary.json`, the part files deleted), the window (configuration, a search with its preview, the first messages of each folder, the folder tree, the folder view and the content of a message in the reading pane, values to fix), the time left and the command line.
+`tests\MailboxMessageReport.FakeGraph.ps1` replaces the transport with a simulated Exchange Online that behaves like the lab: `settings/exchange` in beta (the archive ID, *MailboxNotEnabledForRESTAPI* for a mailbox on-premises), a mailbox opened by its user ID, any alias or its `MBX:` ID, the folder tree of `mailFolders/delta` in pages (`Prefer: odata.maxpagesize`), Recoverable Items, the messages filtered by date and subject with `contains()` refused before the date (*InefficientFilter*), `$select`, `$orderby` ascending or descending, `$top` / `$skip` and their nextLink, `$count=true` (or not, on demand), pages cut short (a message Exchange cannot return, with or without its recipients; pages too large; once), `$batch` in v1.0 and beta, one message by its ID with its body as text (`Prefer: outlook.body-content-type="text"`), 429 and failures on demand; every request is recorded with the most requests in flight per mailbox. The tests cover the configuration, the lists of mailboxes (text, CSV, `ArchiveGuid`), the request and the filter, the connection and the permissions, the mailboxes (alias, archive from Graph or from the list, on-premises, not a mailbox, twice under two aliases), the folders (paths, Recoverable Items, empty, left out), the messages (period, subjects, columns, time zone, order, pages, 4 per mailbox, slices of a large folder of the same number of messages (the cuts at k·N/n), a folder whose messages came in a few days, a slice cut again while read (every message once, newest first, 4 requests at a time), the progress (never above 100 %, values on the way, 100 % at the end), without recipients, 429 retried, a folder that fails, pages cut short asked again smaller and a message Graph cannot return left out), *Stop*, the report (global, per mailbox, both, CSV safe for Excel, HTML safe, every message in the compressed blocks of the HTML report decoded as the page does, the most messages of a page, a message of 10,000 recipients: its cell cut for Excel, *RecipientCount*, every recipient in the HTML report, `Summary.json`, the part files deleted), the window (configuration, a search with its preview, the first messages of each folder, the folder tree, the folder view and the content of a message in the reading pane, values to fix), the time left and the command line.
 
 <!-- icon: book -->
 ## 15. Documentation and package
@@ -472,7 +483,8 @@ A link from one guide to the other is written with its GitHub anchor (`MailboxMe
 | The HTML report shows no message | With `-Layout PerMailbox` the messages are in the report of each mailbox (*Mailboxes* tab, `Mailboxes\`). Otherwise the browser does not run the script of the report (a notice says so since 1.1.1), or cannot decompress its messages (*This browser cannot open the messages of the report*): open it in Microsoft Edge or Google Chrome, not in Internet Explorer mode or the preview of OneDrive / SharePoint; the CSV files hold every message. |
 | Excel shows a row cut in two, a row of thousands of columns of addresses | A CSV file of version 1.x with a message of thousands of recipients (a cell longer than 32,767 characters): version 2.0.0 cuts the list in the cell (chapter 11). |
 | *N of M messages are in this page* | More messages than `Report.HtmlMaxMessages`: `-HtmlMaxMessages 2000000`, or one report per mailbox (`-Layout PerMailbox`). |
-| A run takes long on one folder | A large folder of meeting messages with recipients: `-SkipRecipients`, or leave the folder out (`-ExcludeFolder '\Deleted Items'`). The progress line gives the time left. |
+| A run takes long on one folder | A large folder of meeting messages with recipients: `-SkipRecipients`, or leave the folder out (`-ExcludeFolder '\Deleted Items'`). The progress line gives the time left; the log gives the speed of each mailbox and the 5 slowest folders (chapter 13). |
+| The progress bar stays at 100 % while the messages are read | Version 2.0 and before (a folder cut in equal periods counted its empty slices as read): 2.1.0 shows the share of the messages read. |
 | *Mailbox Message Report 1.0.0 is already loaded in this PowerShell session* | The compiled part of another version is loaded in this process (it cannot be unloaded): open a new PowerShell window. |
 | *Cannot add type* · *... is not allowed in this language mode* when the module loads | PowerShell runs in *Constrained Language* mode (AppLocker or App Control policy): the tool needs *Full Language* (a folder allowed by the policy, or signed scripts). |
 | The window shows “The pipeline has been stopped” | The command that opened it was stopped (*Stop* in an editor): close it and run `-Gui` again. |
@@ -511,6 +523,10 @@ A lab tenant, Microsoft Graph v1.0 and beta, application token, 2026-10-07. Test
 | Tool on it, `-SkipRecipients` (8 slices, pages of 1,000) | 39,434 messages, each once, in date order, 42.5 s |
 | Tool on it, with the recipients (8 slices, pages of 1,000) | 39,434 messages, each once, To filled for 39,425 (the others had none), 7 min 27 s |
 | `$filter=receivedDateTime lt ...` alone, or `ge ...` alone, `$orderby=receivedDateTime desc` (the open slices, 1.1.1) | 200, sorted; the same 39,434 messages, each once, with the open slices (`-SkipRecipients`, 36.9 s) |
+| `$top=1&$count=true` on that folder; with a filter of dates | `@odata.count` 39,419 in 0.4 s; 39,372 (July 1 to 20) in 1.2 s |
+| `$top=1&$skip=` 1,000 / 10,000 / 20,000 / 30,000 / 39,000 (newest first) | 0.5 / 0.4 / 1.4 / 4.0 / 2.1 s; the received dates: 39,372 messages between July 11 and 13 |
+| `$count=true` on a page of 250 | 5.8 s instead of 5.6 s; the nextLink keeps it (the tool asks it on the first page only) |
+| 2.0.0 then 2.1.0 on that folder, 6 months, with the recipients | 14 min 06 s (8 slices of equal periods, one of almost every message); 3 min 08 s (16 slices of the same number, 12 cut again) |
 | nextLink of a page of messages | `%24top=N&%24skip=M`; `$skip` honoured with `$filter` and `$orderby` (items 3 to 5 for `$top=3&$skip=2`) |
 | A CSV row with a list of 10,000 recipients (260,000 characters) opened in Excel (2.0.0, through COM) | as 1.x wrote it: 4 rows × 8,750 columns (the row cut, the rest of the addresses in a row of its own); as 2.0.0 writes it: 3 rows × 23 columns, *RecipientCount* 10,001 |
 | HTML report of 5,275 messages of the lab (two mailboxes, their archives, Recoverable Items, recipients) | 307 KB; filters, sort, detail and export checked in Microsoft Edge |

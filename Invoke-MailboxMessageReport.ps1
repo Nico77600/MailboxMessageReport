@@ -100,7 +100,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 2.0.0
+    Version : 2.1.0
     Exit codes : 0 = completed, 1 = failed, 2 = finished with warnings (a mailbox or a folder not read...).
     Documentation : docs\MailboxMessageReport-UserGuide.html (user guide: prerequisites, everyday commands) and
                     docs\MailboxMessageReport-Guide.html (developer guide); sources: docs\*.md

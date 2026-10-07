@@ -30,7 +30,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 2.0.0  (from Meeting Cleanup 1.2.3)
+    Version : 2.1.0  (from Meeting Cleanup 1.2.3)
     Part of : Mailbox Message Report (repository tool, not in the package)
 #>
 [CmdletBinding()]
@@ -175,16 +175,23 @@ body { display: block; margin: 0; padding: 0; }
 #endregion
 
 #region Rendering (Microsoft Edge, headless) -------------------------------------------------------
+function Stop-EdgeTree([int]$Id) {
+    # An Edge process and its helpers (they keep the profile in use): stopped by process ID.
+    foreach ($child in @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $Id" -ErrorAction SilentlyContinue)) { Stop-EdgeTree $child.ProcessId }
+    Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue
+}
+
 function Save-Screenshot([string]$Html, [string]$Png, [int]$Width, [int]$Height, [int]$Scale = 1) {
     $url = 'file:///' + ($Html -replace '\\', '/')
-    $profilePath = Join-Path $work 'edge-profile'
+    # A profile of its own for each capture: an Edge that did not exit keeps its profile.
+    $profilePath = Join-Path $work ('edge-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
     if (Test-Path $Png) { Remove-Item $Png -Force }
     # Start-Process, not &: an Edge helper process can keep the output pipe open after the capture.
     $edgeArgs = @('--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', "--user-data-dir=`"$profilePath`"", "--window-size=$Width,$Height", "--force-device-scale-factor=$Scale", "--screenshot=`"$Png`"", "`"$url`"")
     $proc = Start-Process -FilePath $edge -ArgumentList $edgeArgs -PassThru -WindowStyle Hidden
     $deadline = (Get-Date).AddSeconds(45)
     while (-not (Test-Path $Png) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
-    if (-not $proc.WaitForExit(10000)) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+    if (-not $proc.WaitForExit(10000)) { Stop-EdgeTree $proc.Id }
     if (-not (Test-Path $Png)) { throw "Screenshot not written: $Png" }
 }
 
@@ -192,17 +199,21 @@ function Get-PageHeight([string]$Html, [int]$Width) {
     # Height of the .canvas element: the page writes it in body[data-h], read with --dump-dom.
     $url = 'file:///' + ($Html -replace '\\', '/')
     $dom = Join-Path $work ('dom-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.html')
-    $edgeArgs = @('--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', "--user-data-dir=`"$(Join-Path $work 'edge-profile')`"", "--window-size=$Width,2000", '--dump-dom', "`"$url`"")
+    $edgeArgs = @('--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', "--user-data-dir=`"$(Join-Path $work ('edge-' + [guid]::NewGuid().ToString('N').Substring(0, 8)))`"", "--window-size=$Width,2000", '--dump-dom', "`"$url`"")
     $proc = Start-Process -FilePath $edge -ArgumentList $edgeArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $dom
-    if (-not $proc.WaitForExit(45000)) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-    # Edge helper processes inherit the output handle: read in shared mode, retry until written.
+    # Read as soon as the DOM is written (shared mode: Edge helper processes inherit the output handle). Recent Edge
+    # versions do not always exit after --dump-dom: stopped once the height is read, or after 60 s.
     $m = $null
-    for ($i = 0; $i -lt 20 -and -not ($m -and $m.Success); $i++) {
-        $stream = [IO.File]::Open($dom, 'Open', 'Read', 'ReadWrite')
-        try { $text = [IO.StreamReader]::new($stream).ReadToEnd() } finally { $stream.Dispose() }
-        $m = [regex]::Match($text, 'data-h="(\d+)"')
-        if (-not $m.Success) { Start-Sleep -Milliseconds 250 }
+    $deadline = (Get-Date).AddSeconds(60)
+    while (-not ($m -and $m.Success) -and (Get-Date) -lt $deadline) {
+        if (Test-Path $dom) {
+            $stream = [IO.File]::Open($dom, 'Open', 'Read', 'ReadWrite')
+            try { $text = [IO.StreamReader]::new($stream).ReadToEnd() } finally { $stream.Dispose() }
+            $m = [regex]::Match($text, 'data-h="(\d+)"')
+        }
+        if (-not ($m -and $m.Success)) { Start-Sleep -Milliseconds 300 }
     }
+    if (-not $proc.HasExited) { Stop-EdgeTree $proc.Id }
     if (-not $m.Success) { throw "Height not measured: $Html" }
     return [int]$m.Groups[1].Value
 }
@@ -272,7 +283,7 @@ try {
         [pscustomobject]@{ Icon = 'file'; Name = 'Every message'; Chip = '<span class="rb-chip hot">CSV</span>'; Text = 'Received and sent, subject, from, <strong>To, Cc, Bcc</strong>, Internet message ID, folder path, and <strong>Primary / Archive / Recoverable Items</strong>.'; Pills = (Get-ReadmePill 'Opens in Excel' 'success') + (Get-ReadmePill 'Formula-safe' 'info') }
         [pscustomobject]@{ Icon = 'chart'; Name = 'The report'; Chip = '<span class="rb-chip">HTML</span>'; Text = 'Self-contained, searchable and sortable: <strong>messages</strong>, <strong>folders</strong>, <strong>mailboxes</strong>; a click shows a message in full.'; Pills = (Get-ReadmePill 'Light and dark' 'violet') + (Get-ReadmePill 'Sent alone' 'teal') }
         [pscustomobject]@{ Icon = 'people'; Name = 'One or per mailbox'; Chip = '<span class="rb-chip">layout</span>'; Text = 'One report for every mailbox, <strong>one per mailbox</strong> with a summary that links to each, or both.'; Pills = (Get-ReadmePill 'Global' 'info') + (Get-ReadmePill 'PerMailbox' 'warning') }
-        [pscustomobject]@{ Icon = 'clock'; Name = 'Built for volume'; Chip = '<span class="rb-chip">fast</span>'; Text = '4 lists at a time per mailbox, <strong>a large folder in slices of its dates</strong>, pages to disk: the memory does not grow with the messages.'; Pills = (Get-ReadmePill '16 requests in flight' 'teal') + (Get-ReadmePill 'Time left shown' 'success') }
+        [pscustomobject]@{ Icon = 'clock'; Name = 'Built for volume'; Chip = '<span class="rb-chip">fast</span>'; Text = '4 lists at a time per mailbox, <strong>a large folder in slices of the same size</strong>, pages to disk: the memory does not grow with the messages.'; Pills = (Get-ReadmePill '16 requests in flight' 'teal') + (Get-ReadmePill 'Time left shown' 'success') }
     )
     $outHtml = ($outputs | ForEach-Object { "<div class=""card-item""><div class=""card-icon"">$(Get-ReadmeIcon $_.Icon)</div><div><div class=""card-title"">$($_.Name) $($_.Chip)</div><div class=""card-text"">$($_.Text)</div><div>$($_.Pills)</div></div></div>" }) -join ''
     $howItWorks = "<div class=""rb-hiw""><div class=""rb-col""><div class=""rb-caption"">The run <span>$mid the same from the console and the window</span></div>$(ConvertTo-ReadmeFlow $stages -Vertical)</div>" +

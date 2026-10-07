@@ -2,6 +2,17 @@
 
 All notable changes to Mailbox Message Report. Versions: MAJOR.MINOR.PATCH (developer guide, appendix D).
 
+## 2.1.0 - 2026-10-07
+
+Large folders read 4 requests at a time to the end, and a progress bar that shows the messages read.
+
+- **Slices of the same number of messages**: a folder of more than `Graph.SplitFolderItems` messages (now **2,000**, 5,000 before) is cut at the dates of the messages at 1/n, 2/n... of the folder (`$top=1&$count=true`, then `$top=1&$skip=k·N/n`), 16 slices at most. 2.0 cut the period in equal parts: a room's *Deleted Items* had 39,372 of its 39,419 messages in 3 days of 6 months, one slice held almost all of them, read one page after the other.
+- **Slices cut again while read**: when a mailbox has free request slots (Exchange answers 4 at a time per mailbox), the list with the longest period left is cut in two at the middle (the list in course stops there, a new slice reads the older half; 64 per folder at most; each cut in the log). Every message is read once, newest first.
+- Lab, that folder, 6 months, with the recipients: **14 min 06 s → 3 min 08 s** (214 messages a second, 3.9 requests at a time on average instead of 1).
+- **Progress bar**: the share of the messages read, folder by folder (the number of messages of the filter of each list, `$count` on its first page). 2.0 counted the empty slices of a folder as read: the bar stayed at 100 %. The progress line gives the messages a second.
+- **HTML report**: a **Read** column in the table of the messages (*No* in colour, the subject of an unread message in bold) and a **Read** filter (all, read, unread), with the others; sortable like every column.
+- **Speed in the log**: the time of a page (average, longest), the requests in flight on average, the messages a second of the run and of each mailbox, the 5 slowest folders. New column **Seconds** in `Folders.csv` and *Read in* in the *Folders* tab of the HTML report.
+- 38 Pester tests (cuts at k·N/n, a folder whose messages came in a few days, a slice cut again while read, the progress); the simulated Exchange answers `$count=true`.
 ## 2.0.0 - 2026-10-07
 
 Every message in the HTML report, and a CSV file Excel always opens. The format of the reports changes (MAJOR).

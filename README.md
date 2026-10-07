@@ -45,7 +45,7 @@ The mail API of Microsoft Graph is documented for the primary mailbox only. But 
 - **What is read**: received and sent date and time, subject, sender, **To, Cc, Bcc**, Internet message ID, folder and path, attachments, importance, type. The reports never hold the body or the attachments.
 - **Filtered by Exchange**: the period (`-Start`, `-End`, received date) and the subjects (`-Subject`, any of them) are a `$filter` of Graph, written the way Exchange accepts it (the date first, then `contains()`). Folders can be left out (`-ExcludeFolder '\Junk Email'`).
 - **One mailbox or thousands**: `-Mailbox` or a list (text or CSV); one report for all of them, **one per mailbox** (with a summary that links to each), or both.
-- **Large mailboxes**: 16 requests in flight, 4 at a time per mailbox (a primary mailbox and its archive are two mailboxes); a folder of more than 5,000 items is read in **slices of its dates**, side by side; each page is written to disk at once — the memory does not grow with the messages. The console and the window give the time left.
+- **Large mailboxes**: 16 requests in flight, 4 at a time per mailbox (a primary mailbox and its archive are two mailboxes); a large folder is read in **slices of the same number of messages**, side by side, cut again while read so that the 4 requests of a mailbox stay busy (39,414 meeting messages with recipients: 14 min → 3 min); each page is written to disk at once — the memory does not grow with the messages. The console and the window give the time left.
 - **The window, like Outlook**: the search typed in the window, then the folders of each mailbox and of its archive in a tree, the first 10 messages of each folder, and a **reading pane** with the recipients, the dates, the folder and the content of the message selected (read on demand, with `Mail.Read`, logged).
 - **Application permissions of Microsoft Graph** and a certificate: `Mail.ReadBasic.All` and `User.Read.All` (`Mail.Read` only for the content in the reading pane); no user account, no module.
 
@@ -112,7 +112,7 @@ Each run writes `MailboxMessageReport-Messages.csv` (every message; a list of th
 Download `MailboxMessageReport-<version>.zip` from the [latest release](https://github.com/Nico77600/MailboxMessageReport/releases/latest), extract it (for example in `C:\Tools`) and unblock the files (command at the top of this page).
 
 ```powershell
-cd C:\Tools\MailboxMessageReport-2.0.0
+cd C:\Tools\MailboxMessageReport-2.1.0
 notepad .\config\MailboxMessageReport.config.psd1          # tenant, application, certificate thumbprint
 
 .\Invoke-MailboxMessageReport.ps1 -Gui                     # the window
@@ -144,7 +144,7 @@ Both guides also exist as a single HTML file with a light and a dark theme (`doc
 pwsh -File .\tools\Measure-MailboxMessageReport.ps1 -Messages 500000 -Simulated   # time of each step, synthetic data
 ```
 
-The tool was also validated on a lab tenant: primary mailboxes and archives read through their `MBX:` IDs, Recoverable Items, mailboxes without archive, on-premises and not found, a list with `ArchiveGuid` and the permissions measured with temporary applications, periods and subjects, a folder of 39,419 messages read in 8 slices — every message once ([developer guide, appendix C](docs/MailboxMessageReport-Guide.md#appendix-c---lab-measurements)).
+The tool was also validated on a lab tenant: primary mailboxes and archives read through their `MBX:` IDs, Recoverable Items, mailboxes without archive, on-premises and not found, a list with `ArchiveGuid` and the permissions measured with temporary applications, periods and subjects, a folder of 39,419 messages read in 16 slices cut again while read — every message once ([developer guide, appendix C](docs/MailboxMessageReport-Guide.md#appendix-c---lab-measurements)).
 
 ## License
 

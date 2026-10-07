@@ -26,7 +26,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 2.0.0
+    Version : 2.1.0
 #>
 
 $script:GraphRoot = 'https://graph.microsoft.com/v1.0'
@@ -505,6 +505,7 @@ function New-MmrPagedJob {
     [pscustomobject]@{
         Id = $Id; Url = $u; Headers = $Headers; Tag = $Tag; Mailbox = (Get-MmrMailboxKey ($u -replace '^https://graph\.microsoft\.com/(v1\.0|beta)', '')); Attempt = 0; NotBefore = [datetime]::MinValue; Pages = 0
         PageSize = [int](Get-MmrUrlParameter $u 'top'); Select = [string](Get-MmrUrlParameter $u 'select'); Cuts = 0; CutTotal = 0; Reduced = $false; Skipped = 0; Partial = 0
+        Started = $null; Seconds = [double]0
     }
 }
 
@@ -622,6 +623,9 @@ function Invoke-MmrGraphPaged {
         else the error of the page that failed (the pages before were given to OnPage).
     .PARAMETER OnProgress
         { param() } after each page or error.
+    .PARAMETER OnIdle
+        { param([string]$Mailbox, [int]$Free) } when a mailbox has request slots that nothing waits for (its last lists
+        are read page after page): returns new jobs for it (a slice of a list in course cut in two), or nothing.
     .NOTES
         Stopped by the user (window): OperationCanceledException at once; the requests in flight are abandoned.
     #>
@@ -629,10 +633,14 @@ function Invoke-MmrGraphPaged {
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Jobs,
         [Parameter(Mandatory = $true)][scriptblock]$OnPage,
         [Parameter(Mandatory = $true)][scriptblock]$OnDone,
-        [scriptblock]$OnProgress
+        [scriptblock]$OnProgress,
+        [scriptblock]$OnIdle
     )
 
     if (-not $Jobs.Count) { return }
+    $lists = $Jobs.Count
+    # Time of each page (request sent -> answer read): average, longest, and the requests in flight on average.
+    $pageSeconds = [double]0; $pageMax = [double]0; $answers = 0
     $settings = $script:Graph.Settings
     $maxRetries = [int]$settings.MaxRetries
     $concurrency = [Math]::Max(1, [int]$settings.MaxConcurrency)
@@ -679,7 +687,8 @@ function Invoke-MmrGraphPaged {
             $q.RemoveFirst()
             $busy[$key] = $busy[$key] + 1
             Update-MmrToken
-            $inflight.Add(@{ Job = $job; Handle = (Start-MmrGraphSend -Method 'GET' -Url $job.Url -Headers $job.Headers) })
+            if (-not $job.Started) { $job.Started = [datetime]::UtcNow }
+            $inflight.Add(@{ Job = $job; Sent = [datetime]::UtcNow; Handle = (Start-MmrGraphSend -Method 'GET' -Url $job.Url -Headers $job.Headers) })
             # The mailbox in turn again: the others are served before its next job.
             & $markReady $key
         }
@@ -705,6 +714,9 @@ function Invoke-MmrGraphPaged {
             $job = $call.Job
             $busy[$job.Mailbox] = $busy[$job.Mailbox] - 1
             $r = Complete-MmrGraphSend $call.Handle
+            $took = ([datetime]::UtcNow - $call.Sent).TotalSeconds
+            $job.Seconds += $took; $pageSeconds += $took; $answers++
+            if ($took -gt $pageMax) { $pageMax = $took }
             if ($r.Status -eq 200) {
                 # A page whose JSON is cut short is asked again, smaller (Step-MmrPagedCut): never the end of the run.
                 $next = $null
@@ -745,8 +757,24 @@ function Invoke-MmrGraphPaged {
                 & $OnDone $job $r.Status $err.Code $err.Message
             }
             & $markReady $job.Mailbox
+            # Slots of this mailbox that nothing waits for: the caller may cut a list in course in two.
+            if ($OnIdle) {
+                $key = $job.Mailbox
+                $free = $limit - $busy[$key] - $queues[$key].Count
+                if ($free -gt 0) {
+                    foreach ($new in @(& $OnIdle $key $free)) {
+                        if (-not $new) { continue }
+                        if (-not $queues.ContainsKey($new.Mailbox)) { $queues[$new.Mailbox] = [Collections.Generic.LinkedList[object]]::new(); $busy[$new.Mailbox] = 0 }
+                        [void]$queues[$new.Mailbox].AddLast($new)
+                        $lists++
+                        & $markReady $new.Mailbox
+                    }
+                }
+            }
         }
         if ($OnProgress) { & $OnProgress }
     }
-    Write-MmrLog 'INFO' ("Graph: {0} list(s), {1} page(s), {2} retried, {3}" -f $Jobs.Count, $pages, $retries, (Format-MmrDuration ([datetime]::UtcNow - $started).TotalSeconds))
+    $elapsed = ([datetime]::UtcNow - $started).TotalSeconds
+    $speed = if ($answers) { '; a page {0:N1} s on average, {1:N1} s at most, {2:N1} requests at a time' -f ($pageSeconds / $answers), $pageMax, ($pageSeconds / [Math]::Max(0.001, $elapsed)) } else { '' }
+    Write-MmrLog 'INFO' ("Graph: {0} list(s), {1} page(s), {2} retried, {3}{4}" -f $lists, $pages, $retries, (Format-MmrDuration $elapsed), $speed)
 }

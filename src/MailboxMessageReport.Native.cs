@@ -20,7 +20,7 @@
 //   PreviewRow  a message in the window; BulkCollection, the list bound to the window
 //
 // Author : Nicolas Fabert
-// Version: 2.0.0
+// Version: 2.1.0
 
 using System;
 using System.Collections;
@@ -85,7 +85,7 @@ namespace MailboxMessageReportNative
 
     public static class Fast
     {
-        public const string Version = "2.0.0";
+        public const string Version = "2.1.0";
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
         /// <summary>A UTC date shown in a time zone: yyyy-MM-dd HH:mm (or HH:mm:ss, or yyyy-MM-dd). -PeriodEnd: 00:00 shows the day before.</summary>
@@ -159,8 +159,13 @@ namespace MailboxMessageReportNative
     /// <summary>The rows of one page of messages and the link to the next page.</summary>
     public sealed class PageResult
     {
+        /// <summary>Messages written (those older than the floor of the writer are not).</summary>
         public int Rows { get; set; }
         public string NextLink { get; set; }
+        /// <summary>@odata.count of the page ($count=true: the messages of the list), -1 when absent.</summary>
+        public long Total { get; set; }
+        /// <summary>The page reached the floor of the writer: the list ends here, an older slice reads the rest.</summary>
+        public bool Floor { get; set; }
     }
 
     /// <summary>
@@ -192,14 +197,21 @@ namespace MailboxMessageReportNative
 
         public string Path { get; private set; }
         public long Count { get; private set; }
+        /// <summary>
+        /// Messages received before this date are not written and end the list: the slice was cut in two while it was
+        /// read, an older slice reads them (Read-MmrMessages). Null: none.
+        /// </summary>
+        public DateTime? FloorUtc { get; set; }
+        /// <summary>The received date of the last message written (the oldest so far: the pages come newest first).</summary>
+        public DateTime? LastUtc { get; private set; }
 
         /// <summary>
-        /// A page answered by Graph (a Body, or JSON text): its messages appended as rows; returns how many and the
-        /// nextLink ("" on the last page).
+        /// A page answered by Graph (a Body, or JSON text): its messages appended as rows; returns how many, the
+        /// nextLink ("" on the last page, or when the floor is reached) and the @odata.count of the page.
         /// </summary>
         public PageResult AddPage(object content)
         {
-            var result = new PageResult { Rows = 0, NextLink = "" };
+            var result = new PageResult { Rows = 0, NextLink = "", Total = -1 };
             var ps = content as System.Management.Automation.PSObject;
             if (ps != null) { content = ps.BaseObject; }
             var body = content as Body;
@@ -214,12 +226,16 @@ namespace MailboxMessageReportNative
                 {
                     foreach (var m in value.EnumerateArray())
                     {
-                        WriteRow(m);
+                        var received = ParseUtc(Str(m, "receivedDateTime"));
+                        if (FloorUtc.HasValue && received.HasValue && received.Value < FloorUtc.Value) { result.Floor = true; continue; }
+                        WriteRow(m, received);
+                        if (received.HasValue) { LastUtc = received; }
                         result.Rows++;
                     }
                 }
-                JsonElement next;
-                if (root.TryGetProperty("@odata.nextLink", out next) && next.ValueKind == JsonValueKind.String) { result.NextLink = next.GetString(); }
+                JsonElement next, total;
+                if (!result.Floor && root.TryGetProperty("@odata.nextLink", out next) && next.ValueKind == JsonValueKind.String) { result.NextLink = next.GetString(); }
+                if (root.TryGetProperty("@odata.count", out total) && total.ValueKind == JsonValueKind.Number) { result.Total = total.GetInt64(); }
             }
             _buffer.WriteTo(_stream);
             _buffer.SetLength(0);
@@ -228,13 +244,11 @@ namespace MailboxMessageReportNative
             return result;
         }
 
-        void WriteRow(JsonElement m)
+        void WriteRow(JsonElement m, DateTime? receivedUtc)
         {
             _json.Reset();
             _json.WriteStartArray();
             foreach (var f in _fixed) { _json.WriteStringValue(f); }
-            var received = Str(m, "receivedDateTime");
-            var receivedUtc = ParseUtc(received);
             _json.WriteStringValue(receivedUtc.HasValue ? Local(receivedUtc.Value) : "");
             var sent = ParseUtc(Str(m, "sentDateTime"));
             _json.WriteStringValue(sent.HasValue ? Local(sent.Value) : "");

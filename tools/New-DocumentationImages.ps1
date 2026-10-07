@@ -13,7 +13,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 2.0.0
+    Version : 2.1.0
 #>
 #Requires -Version 7.4
 [CmdletBinding()]
@@ -75,7 +75,7 @@ $module = Get-Module MailboxMessageReport
             # Not $from or $to: PowerShell variables ignore the case, $From and $To are the period.
             $sender = if ($Sent) { $User } else { $other }
             $name = (Get-Culture).TextInfo.ToTitleCase(($sender -split '@')[0].Replace('.', ' '))
-            $null = Add-FakeMessage $User -Location $Location -Path $Path -Recoverable:$Recoverable -Subject ($subjects[$rnd.Next($subjects.Count)] -f $rnd.Next(1, 60), $date.Year) -Received $date -From $sender -FromName $name -To $toList -Cc $cc -Bcc $bcc -Attachments:($rnd.Next(4) -eq 0)
+            $null = Add-FakeMessage $User -Location $Location -Path $Path -Recoverable:$Recoverable -Subject ($subjects[$rnd.Next($subjects.Count)] -f $rnd.Next(1, 60), $date.Year) -Received $date -From $sender -FromName $name -To $toList -Cc $cc -Bcc $bcc -Attachments:($rnd.Next(4) -eq 0) -Unread:($date.Year -ge 2026 -and $rnd.Next(3) -eq 0)
         }
     }
     foreach ($pair in @(@("megan.bowen@$d", 1.0), @("alex.wilber@$d", 0.6))) {

@@ -2,7 +2,7 @@
 #  Mailbox Message Report - configuration file
 #  --------------------------------------------------------------------------
 #  Author  : Nicolas Fabert
-#  Version : 2.0.0
+#  Version : 2.1.0
 #
 #  Read by Invoke-MailboxMessageReport.ps1 and by the window (-Gui). It is a PowerShell data file: text between
 #  quotes, $true / $false, numbers, @( ) for lists and @{ } for groups of settings. Lines starting with # are
@@ -64,13 +64,14 @@
     # ---------------------------------------------------------------------
     # Requests to Microsoft Graph: one request per page of messages, at most 4 at a time per mailbox (a primary
     # mailbox and its archive are two mailboxes for Exchange Online).
-    #   SplitFolderItems: a folder with more items is read in slices of its received dates, 4 at a time (one slice
-    #     per SplitFolderItems items, 16 at most); 0 = a folder is always read page after page.
+    #   SplitFolderItems: a folder with more messages is read in slices of the same number of messages, 4 at a time
+    #     (one slice per SplitFolderItems messages, 16 at most); a slice is cut again while it is read when the
+    #     mailbox has free request slots. 0 = a folder is always read page after page.
     # ---------------------------------------------------------------------
     Graph = @{
         MaxConcurrency   = 16      # requests in flight (1-32)
         PageSize         = 250     # messages per page (10-1000)
-        SplitFolderItems = 5000
+        SplitFolderItems = 2000
         MaxRetries       = 6       # per request, for 429 / 5xx / no answer (the Retry-After delay is respected)
         TimeoutSeconds   = 120
     }

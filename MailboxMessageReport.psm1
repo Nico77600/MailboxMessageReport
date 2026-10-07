@@ -18,7 +18,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 2.0.0
+    Version : 2.1.0
     History : see CHANGELOG.md
 #>
 #Requires -Version 7.4
@@ -26,7 +26,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Net.Http
 
-$script:ToolVersion = '2.0.0'
+$script:ToolVersion = '2.1.0'
 $script:ToolRoot = $PSScriptRoot
 $script:LogWriter = $null
 $script:LogPath = $null

@@ -18,7 +18,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 2.0.0
+    Version : 2.1.0
 #>
 
 # Section.Key of the configuration file -> key of the settings hashtable.
@@ -54,7 +54,7 @@ function Get-MmrDefaultConfiguration {
         MailboxFile           = ''
         MaxConcurrency        = 16
         PageSize              = 250
-        SplitFolderItems      = 5000
+        SplitFolderItems      = 2000
         MaxRetries            = 6
         TimeoutSeconds        = 120
         OutputPath            = '.\reports'
