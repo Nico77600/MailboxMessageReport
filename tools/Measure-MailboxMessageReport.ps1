@@ -45,7 +45,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$root = Split-Path $PSScriptRoot -Parent
+$repoRoot = Split-Path $PSScriptRoot -Parent
+$root = Join-Path $repoRoot 'package'
 Import-Module (Join-Path $root 'MailboxMessageReport.psd1') -Force
 $module = Get-Module MailboxMessageReport
 $work = Join-Path $root 'artifacts\measure'
@@ -140,7 +141,7 @@ $after = & $memory
 
 # ---- 3. a search of the simulated tenant -------------------------------------------------------------------------
 if ($Simulated) {
-    . (Join-Path $root 'tests\MailboxMessageReport.FakeGraph.ps1')
+    . (Join-Path $repoRoot 'tests\MailboxMessageReport.FakeGraph.ps1')
     Reset-FakeTenant
     $total = 0
     for ($i = 0; $i -lt $SimulatedMailboxes; $i++) {
@@ -157,7 +158,7 @@ if ($Simulated) {
         $token = New-FakeToken
         $script:Graph = @{ Settings = (Get-MmrDefaultConfiguration); Token = $token; ExpiresUtc = [datetime]::UtcNow.AddHours(1); Roles = @('Mail.ReadBasic.All', 'User.Read.All'); CanReadMail = $true; CanReadUsers = $true; CanFindUsers = $true; TenantGuid = $fake.Tenant; AppName = 'Measure' }
         $script:Graph.Settings.PageSize = 100
-    } $fake (Join-Path $root 'tests\MailboxMessageReport.FakeGraph.ps1')
+    } $fake (Join-Path $repoRoot 'tests\MailboxMessageReport.FakeGraph.ps1')
     $s = & $module { $script:Graph.Settings }
     $request = New-MmrRequest -Settings $s -Mailbox @(0..($SimulatedMailboxes - 1) | ForEach-Object { 'sim{0:D3}@contoso.test' -f $_ })
     $simWork = Join-Path $work 'simulated'

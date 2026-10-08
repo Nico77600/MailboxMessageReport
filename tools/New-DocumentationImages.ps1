@@ -8,7 +8,7 @@
     (tests\MailboxMessageReport.FakeGraph.ps1), loaded inside the module, with contoso.com names. The window is rendered
     off screen (RenderTargetBitmap); the report is opened by Microsoft Edge headless.
 
-    Writes docs\images\gui-search-light.png, gui-search-dark.png, gui-progress-light.png, report-overview.png,
+    Writes package\docs\images\gui-search-light.png, gui-search-dark.png, gui-progress-light.png, report-overview.png,
     report-dark.png, report-message.png, report-mailboxes.png, gui-list-light.png. Needs an interactive session (WPF) and Microsoft Edge.
 
 .NOTES
@@ -17,12 +17,13 @@
 #>
 #Requires -Version 7.4
 [CmdletBinding()]
-param([string]$Destination = (Join-Path $PSScriptRoot '..\docs\images'))
+param([string]$Destination = (Join-Path $PSScriptRoot '..\package\docs\images'))
 
 $ErrorActionPreference = 'Stop'
 # The images of the English documentation: the texts of WPF (the empty date field) in English.
 [cultureinfo]::CurrentUICulture = [cultureinfo]::CurrentCulture = [cultureinfo]'en-US'
-$root = Split-Path $PSScriptRoot -Parent
+$repoRoot = Split-Path $PSScriptRoot -Parent
+$root = Join-Path $repoRoot 'package'
 $Destination = [IO.Path]::GetFullPath($Destination)
 [void][IO.Directory]::CreateDirectory($Destination)
 # The reports of the images go where a real installation would put them (the path shows in the window), only when that
@@ -30,10 +31,10 @@ $Destination = [IO.Path]::GetFullPath($Destination)
 $neutral = Join-Path $env:SystemDrive 'Tools\MailboxMessageReport'
 $ownNeutral = -not (Test-Path -LiteralPath $neutral)
 $ownParent = -not (Test-Path -LiteralPath (Split-Path $neutral -Parent))
-$work = if ($ownNeutral) { Join-Path $neutral 'reports' } else { Join-Path $root 'artifacts\doc-images' }
+$work = if ($ownNeutral) { Join-Path $neutral 'reports' } else { Join-Path $repoRoot 'artifacts\doc-images' }
 if (-not $ownNeutral -and (Test-Path $work)) { Remove-Item $work -Recurse -Force }
 try { [void][IO.Directory]::CreateDirectory($work) }
-catch { $ownNeutral = $false; $work = Join-Path $root 'artifacts\doc-images'; if (Test-Path $work) { Remove-Item $work -Recurse -Force }; [void][IO.Directory]::CreateDirectory($work) }
+catch { $ownNeutral = $false; $work = Join-Path $repoRoot 'artifacts\doc-images'; if (Test-Path $work) { Remove-Item $work -Recurse -Force }; [void][IO.Directory]::CreateDirectory($work) }
 $cleanup = {
     if ($ownNeutral) {
         Start-Sleep -Seconds 1
@@ -168,7 +169,7 @@ $module = Get-Module MailboxMessageReport
     $perFolder = $script:Gui.LastFolder
     $per.Form.Close()
     [pscustomobject]@{ Report = (Join-Path $reportFolder 'MailboxMessageReport.html'); PerMailbox = (Join-Path $perFolder 'MailboxMessageReport.html') }
-} (Join-Path $root 'tests\MailboxMessageReport.FakeGraph.ps1') $Destination $work | Set-Variable reports
+} (Join-Path $repoRoot 'tests\MailboxMessageReport.FakeGraph.ps1') $Destination $work | Set-Variable reports
 
 # ---- the HTML report, opened by Microsoft Edge headless ------------------------------------------------
 $edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1

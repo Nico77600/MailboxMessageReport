@@ -14,7 +14,8 @@
 #>
 
 BeforeAll {
-    $script:Root = Split-Path $PSScriptRoot -Parent
+    $script:RepoRoot = Split-Path $PSScriptRoot -Parent
+    $script:Root = Join-Path $script:RepoRoot 'package'
     Import-Module (Join-Path $script:Root 'MailboxMessageReport.psd1') -Force
     $script:Module = Get-Module MailboxMessageReport
     . (Join-Path $PSScriptRoot 'MailboxMessageReport.FakeGraph.ps1')
@@ -25,7 +26,7 @@ BeforeAll {
         $s = & $script:Module { Get-MmrDefaultConfiguration }
         $s.TenantId = $script:Tenant; $s.AppId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'; $s.CertificateThumbprint = ('AB' * 20)
         $s.TimeZone = 'UTC'; $s.MaxRetries = 3; $s.MaxConcurrency = 8
-        $s.OutputPath = Join-Path $script:Root 'artifacts\test-reports'; $s.LogPath = Join-Path $script:Root 'artifacts\test-logs'
+        $s.OutputPath = Join-Path $script:RepoRoot 'artifacts\test-reports'; $s.LogPath = Join-Path $script:RepoRoot 'artifacts\test-logs'
         foreach ($k in $Overrides.Keys) { $s[$k] = $Overrides[$k] }
         return $s
     }
@@ -117,7 +118,7 @@ Describe 'Configuration and request' {
     }
 
     It 'lists unknown sections, unknown keys and invalid values together' {
-        $path = Join-Path $script:Root 'artifacts\bad.config.psd1'
+        $path = Join-Path $script:RepoRoot 'artifacts\bad.config.psd1'
         [void][IO.Directory]::CreateDirectory((Split-Path $path))
         "@{ Tenant = @{ TenantId = 'not a tenant' }; Search = @{ Locations = @('Primary', 'Elsewhere'); Futur = 1; ExcludeFolders = @('Junk') }; Extra = @{}; Graph = @{ PageSize = 5000 }; Report = @{ CsvDelimiter = '|'; Layout = 'Flat' } }" | Set-Content $path
         $text = ({ Import-MmrConfiguration -Path $path } | Should -Throw -PassThru).Exception.Message
@@ -132,7 +133,7 @@ Describe 'Configuration and request' {
     }
 
     It 'reads a list of mailboxes: text, or CSV with the ArchiveGuid of Get-EXOMailbox' {
-        $dir = Join-Path $script:Root 'artifacts'
+        $dir = Join-Path $script:RepoRoot 'artifacts'
         $txt = Join-Path $dir 'list.txt'
         "# team`nalice@contoso.test`nBob@Contoso.test  # comment`n`nalice@contoso.test" | Set-Content $txt
         $l = Read-MmrMailboxFile $txt
@@ -146,7 +147,7 @@ Describe 'Configuration and request' {
 
     It 'builds a request: mailboxes typed and of a file once each, the period in the time zone, the subjects, the defaults' {
         $s = New-TestSettings @{ TimeZone = 'Romance Standard Time' }
-        $csv = Join-Path $script:Root 'artifacts\list2.csv'
+        $csv = Join-Path $script:RepoRoot 'artifacts\list2.csv'
         "Mail;ArchiveGuid`nbob@contoso.test;`ncarol@contoso.test;01234567-89ab-cdef-0123-456789abcdef" | Set-Content $csv
         $r = New-MmrRequest -Settings $s -Mailbox 'alice@contoso.test; Bob@contoso.test' -MailboxFile $csv -Start '2026-01-01' -End '2026-01-31' -Subject "Contrat Alpha`nFacture", 'Facture'
         ($r.Mailboxes | ForEach-Object Address) | Should -Be @('alice@contoso.test', 'bob@contoso.test', 'carol@contoso.test')
@@ -242,7 +243,7 @@ Describe 'Mailboxes' {
 
     It 'reads the archive from the ArchiveGuid of the list without User.Read.All' {
         $guid = $script:Alice.ArchiveGuid
-        $csv = Join-Path $script:Root 'artifacts\guid.csv'
+        $csv = Join-Path $script:RepoRoot 'artifacts\guid.csv'
         "PrimarySmtpAddress,ArchiveGuid`nalice@contoso.test,$guid`nbob@contoso.test," | Set-Content $csv
         $r = (Find-Test -Mailbox @() -More @{ MailboxFile = $csv } -Roles @('Mail.ReadBasic.All')).Result
         $alice = $r.Mailboxes | Where-Object Address -eq 'alice@contoso.test'
@@ -733,7 +734,7 @@ Describe 'Progress' {
 
 Describe 'Command line' {
     It 'stops with exit code 1 and the list of the problems on a wrong configuration' {
-        $path = Join-Path $script:Root 'artifacts\cli-bad.config.psd1'
+        $path = Join-Path $script:RepoRoot 'artifacts\cli-bad.config.psd1'
         "@{ Graph = @{ MaxConcurrency = 0 } }" | Set-Content $path
         $out = & pwsh -NoProfile -File (Join-Path $script:Root 'Invoke-MailboxMessageReport.ps1') -ConfigPath $path -Mailbox 'a@contoso.test' 2>&1
         $LASTEXITCODE | Should -Be 1
@@ -742,8 +743,8 @@ Describe 'Command line' {
     }
 
     It 'refuses to run without a mailbox' {
-        $path = Join-Path $script:Root 'artifacts\cli-ok.config.psd1'
-        "@{ Logging = @{ Path = '$((Join-Path $script:Root 'artifacts\test-logs'))' } }" | Set-Content $path
+        $path = Join-Path $script:RepoRoot 'artifacts\cli-ok.config.psd1'
+        "@{ Logging = @{ Path = '$((Join-Path $script:RepoRoot 'artifacts\test-logs'))' } }" | Set-Content $path
         $out = & pwsh -NoProfile -File (Join-Path $script:Root 'Invoke-MailboxMessageReport.ps1') -ConfigPath $path 2>&1
         $LASTEXITCODE | Should -Be 1
         ($out -join ' ') | Should -Match 'Give the mailbox'
