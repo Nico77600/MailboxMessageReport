@@ -152,4 +152,9 @@ The tool was also validated on a lab tenant: primary mailboxes and archives read
 
 ## Disclaimer
 
-Personal project, provided as is. It is not an official Microsoft product and is not supported by Microsoft. The archive is read through an ID that Microsoft Graph gives (a beta endpoint) and opens, but that its documentation does not describe for the archive: test it in your environment before production use. The reports contain personal data (addresses, subjects): store and share them accordingly.
+This Script is a Personal project.
+It's provided "AS-IS". It's not an official Microsoft product so no support can be expected from Microsoft.
+
+As any scripts you must read carefully the documentation and test it first in a Test environment before any run in Production.
+
+The archive is read through an ID that Microsoft Graph gives (a beta endpoint) and opens, but that its documentation does not describe for the archive: test it in your environment before production use. The reports contain personal data (addresses, subjects): store and share them accordingly.
