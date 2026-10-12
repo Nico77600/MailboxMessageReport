@@ -104,7 +104,18 @@
     Exit codes : 0 = completed, 1 = failed, 2 = finished with warnings (a mailbox or a folder not read...).
     Documentation : docs\MailboxMessageReport-UserGuide.html (user guide: prerequisites, everyday commands) and
                     docs\MailboxMessageReport-Guide.html (developer guide); sources: docs\*.md
+
+    Disclaimer:
+    This Script is a Personal project.
+    It's provided "AS-IS". It's not an official Microsoft product so no support can be expected from Microsoft.
+
+    As any scripts you must read carefully the documentation and test it first in a Test environment before any run in Production.
+
+    The archive is read through an ID that Microsoft Graph gives (a beta endpoint) and opens, but that its
+    documentation does not describe for the archive: test it in your environment before production use.
+    The reports contain personal data (addresses, subjects): store and share them accordingly.
 #>
+
 #Requires -Version 7.4
 [CmdletBinding()]
 param(
