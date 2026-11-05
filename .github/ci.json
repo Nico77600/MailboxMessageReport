@@ -3,8 +3,10 @@
   "testMode": "runner",
   "testEntry": "Run-Tests.ps1",
   "tests": [
-    "tests/MailboxMessageReport.Tests.ps1"
+    "tests/MailboxMessageReport.Tests.ps1",
+    "tests/PackageIntegrity.Tests.ps1"
   ],
   "packageBuilder": "tools/New-MailboxMessageReportPackage.ps1",
-  "packageEntry": "Invoke-MailboxMessageReport.ps1"
+  "packageEntry": "Invoke-MailboxMessageReport.ps1",
+  "packageUnsigned": true
 }

@@ -128,7 +128,9 @@ switch ($Stage) {
         if (Test-Path -LiteralPath $destination) { throw 'The package output already exists; it will not be overwritten.' }
         & {
             Set-StrictMode -Off
-            & $builder -Destination $destination
+            $builderArguments = @{ Destination = $destination }
+            if ($configuration.packageUnsigned) { $builderArguments.Unsigned = $true }
+            & $builder @builderArguments
         }
         $entry = Join-Path $destination $configuration.packageEntry
         if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) {

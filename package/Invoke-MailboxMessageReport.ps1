@@ -57,8 +57,8 @@
     Csv, Html or both. Default: Report.Formats. A Summary.json file is always written.
 
 .PARAMETER HtmlMaxMessages
-    The most messages of a HTML report (every message below it; the CSV file holds them all). Default:
-    Report.HtmlMaxMessages (500,000); 0 to 2,000,000.
+    Lowers the limit of messages of a HTML report for this run, 0 to 200,000 (the CSV file holds every message).
+    To raise the limit, change Report.HtmlMaxMessages (500,000 delivered, up to 2,000,000).
 
 .PARAMETER Gui
     Opens the window: the same search, the same report, a preview of the first messages.
@@ -78,6 +78,10 @@
 .PARAMETER ConfigPath
     Configuration file. Default: config\MailboxMessageReport.config.psd1.
 
+.PARAMETER DevelopmentMode
+    Allows a source checkout that has no PackageIntegrity.psd1 manifest (a developer or continuous-integration
+    build). A present manifest is always verified. The release ZIP is started without this switch.
+
 .EXAMPLE
     .\Invoke-MailboxMessageReport.ps1 -Mailbox megan.bowen@contoso.com
     Every message of Megan Bowen, in her primary mailbox and her archive.
@@ -87,7 +91,7 @@
     The messages of her archive received in 2019.
 
 .EXAMPLE
-    .\Invoke-MailboxMessageReport.ps1 -MailboxFile .\team.csv -Subject 'Contrat Alpha', 'Projet Alpha' -Layout Both
+    .\Invoke-MailboxMessageReport.ps1 -MailboxFile C:\Tools\MailboxMessageReport-data\team.csv -Subject 'Contract Alpha', 'Project Alpha' -Layout Both
     The messages of every mailbox of the list whose subject contains one of the two texts: one report for all, and one
     per mailbox.
 
@@ -100,10 +104,10 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 2.1.0
+    Version : 2.1.1
     Exit codes : 0 = completed, 1 = failed, 2 = finished with warnings (a mailbox or a folder not read...).
     Documentation : docs\MailboxMessageReport-UserGuide.html (user guide: prerequisites, everyday commands) and
-                    docs\MailboxMessageReport-Guide.html (developer guide); sources: docs\*.md
+                    docs\MailboxMessageReport-Guide.html (developer guide)
 
     Disclaimer:
     This Script is a Personal project.
@@ -140,7 +144,8 @@ param(
     [string]$AppId,
     [string]$CertificateThumbprint,
     [string]$OutputPath,
-    [string]$ConfigPath = (Join-Path $PSScriptRoot 'config\MailboxMessageReport.config.psd1')
+    [string]$ConfigPath = (Join-Path $PSScriptRoot 'config\MailboxMessageReport.config.psd1'),
+    [switch]$DevelopmentMode
 )
 
 $ErrorActionPreference = 'Stop'
@@ -151,6 +156,36 @@ $exitCode = 1
 $moduleLoaded = $false
 
 try {
+    # The package is verified before any of its code runs: the verifier must carry the owner signature, then it
+    # checks the signed manifest. A tree without a manifest is accepted only with -DevelopmentMode.
+    $integrityHint = 'Use the complete release ZIP (https://github.com/Nico77600/MailboxMessageReport/releases/latest): download it again, extract it and unblock it. A development or CI build is started from its folder with pwsh -NoProfile -File Invoke-MailboxMessageReport.ps1 <parameters> -DevelopmentMode.'
+    $integrityManifest = Join-Path $PSScriptRoot 'PackageIntegrity.psd1'
+    if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $integrityManifest) {
+        $integrityVerifier = Join-Path $PSScriptRoot 'src\Test-PackageIntegrity.ps1'
+        $integrityCursor = [IO.Path]::GetFullPath($integrityVerifier)
+        while ($integrityCursor) {
+            $integrityItem = Microsoft.PowerShell.Management\Get-Item -LiteralPath $integrityCursor -Force -ErrorAction Stop
+            if ($integrityItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "Package integrity: reparse point: $integrityCursor"
+            }
+            $integrityCursor = [IO.Path]::GetDirectoryName($integrityCursor)
+        }
+        $integritySignature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $integrityVerifier -ErrorAction Stop
+        if ([string]$integritySignature.Status -cne 'Valid' -or $null -eq $integritySignature.SignerCertificate -or
+            $integritySignature.SignerCertificate.Thumbprint -cne '0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6' -or
+            $null -eq $integritySignature.TimeStamperCertificate) {
+            throw "Package integrity: verifier must have the trusted, timestamped owner signature. $integrityHint"
+        }
+        if ($DevelopmentMode) { & $integrityVerifier -Root $PSScriptRoot -DevelopmentMode | Out-Null } else { & $integrityVerifier -Root $PSScriptRoot -Distribution | Out-Null }
+    }
+    elseif (-not $DevelopmentMode) {
+        throw "Package integrity: PackageIntegrity.psd1 is missing. $integrityHint"
+    }
+    else {
+        Write-Warning 'DevelopmentMode: no package manifest; package byte integrity and publisher authentication are not established.'
+        # The module does not repeat this warning in the same process.
+        [AppDomain]::CurrentDomain.SetData('MailboxMessageReport.UnverifiedTreeWarned', $true)
+    }
     Import-Module (Join-Path $PSScriptRoot 'MailboxMessageReport.psd1') -Force
     $moduleLoaded = $true
 

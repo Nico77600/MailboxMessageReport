@@ -20,7 +20,7 @@
 //   PreviewRow  a message in the window; BulkCollection, the list bound to the window
 //
 // Author : Nicolas Fabert
-// Version: 2.1.0
+// Version: 2.1.1
 
 using System;
 using System.Collections;
@@ -85,7 +85,7 @@ namespace MailboxMessageReportNative
 
     public static class Fast
     {
-        public const string Version = "2.1.0";
+        public const string Version = "2.1.1";
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
         /// <summary>A UTC date shown in a time zone: yyyy-MM-dd HH:mm (or HH:mm:ss, or yyyy-MM-dd). -PeriodEnd: 00:00 shows the day before.</summary>

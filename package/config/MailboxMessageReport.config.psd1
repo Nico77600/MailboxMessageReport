@@ -2,7 +2,7 @@
 #  Mailbox Message Report - configuration file
 #  --------------------------------------------------------------------------
 #  Author  : Nicolas Fabert
-#  Version : 2.1.0
+#  Version : 2.1.1
 #
 #  Read by Invoke-MailboxMessageReport.ps1 and by the window (-Gui). It is a PowerShell data file: text between
 #  quotes, $true / $false, numbers, @( ) for lists and @{ } for groups of settings. Lines starting with # are
@@ -50,7 +50,9 @@
     #   ExcludeFolders: folders left out, by path with wildcards, for example '\Junk Email', '\Inbox\Newsletters*',
     #     '\Recoverable Items\Purges'. The same paths in the primary mailbox and in the archive.
     #   MailboxFile: default list of mailboxes (one address per line, or a CSV file with PrimarySmtpAddress and
-    #     optionally ArchiveGuid).
+    #     optionally ArchiveGuid), by absolute path in your data folder, for example
+    #     C:\Tools\MailboxMessageReport-data\team.csv. Report.OutputPath and Logging.Path stay .\reports and .\logs
+    #     or point outside the tool folder.
     # ---------------------------------------------------------------------
     Search = @{
         Locations        = @('Primary', 'Archive')

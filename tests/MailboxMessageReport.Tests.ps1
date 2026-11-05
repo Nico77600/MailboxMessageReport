@@ -3,7 +3,7 @@
 <#
     Mailbox Message Report - automated tests (Pester 6.1 or later).
     Author  : Nicolas Fabert
-    Version : 2.1.0
+    Version : 2.1.1
 
     Run:  .\Run-Tests.ps1      (or Invoke-Pester -Path .\tests -Output Detailed)
 
@@ -83,20 +83,20 @@ BeforeAll {
         $script:Carol = Add-FakeUser 'carol@contoso.test' -Name 'Carol OnPrem' -OnPremises
         $null = Add-FakeFolder 'alice@contoso.test' -Path '\Inbox'
         $null = Add-FakeFolder 'alice@contoso.test' -Path '\Sent Items'
-        $null = Add-FakeMessage 'alice@contoso.test' -Path '\Inbox' -Subject 'Contrat Alpha - v3' -Received '2026-03-10T09:00:00' -To 'alice@contoso.test' -Cc 'dan@contoso.test' -Attachments
+        $null = Add-FakeMessage 'alice@contoso.test' -Path '\Inbox' -Subject 'Contract Alpha - v3' -Received '2026-03-10T09:00:00' -To 'alice@contoso.test' -Cc 'dan@contoso.test' -Attachments
         $null = Add-FakeMessage 'alice@contoso.test' -Path '\Inbox' -Subject 'Weekly status' -Received '2026-04-01T08:00:00' -To 'alice@contoso.test' -Unread
-        $null = Add-FakeMessage 'alice@contoso.test' -Path '\Inbox\Projects\Alpha' -Subject 'Projet Alpha: kick-off' -Received '2025-11-05T14:00:00' -To 'alice@contoso.test', 'bob@contoso.test'
-        $null = Add-FakeMessage 'alice@contoso.test' -Path '\Sent Items' -Subject 'RE: Contrat Alpha' -Received '2026-03-11T10:00:00' -From 'alice@contoso.test' -To 'ext@fabrikam.test' -Bcc 'boss@contoso.test'
-        $null = Add-FakeMessage 'alice@contoso.test' -Location Archive -Path '\Inbox' -Subject 'Contrat Alpha - v1' -Received '2019-02-01T09:00:00' -To 'alice@contoso.test'
-        $null = Add-FakeMessage 'alice@contoso.test' -Location Archive -Path '\2019\Q1' -Subject 'Facture 2019-001' -Received '2019-01-15T09:00:00' -To 'alice@contoso.test'
+        $null = Add-FakeMessage 'alice@contoso.test' -Path '\Inbox\Projects\Alpha' -Subject 'Project Alpha: kick-off' -Received '2025-11-05T14:00:00' -To 'alice@contoso.test', 'bob@contoso.test'
+        $null = Add-FakeMessage 'alice@contoso.test' -Path '\Sent Items' -Subject 'RE: Contract Alpha' -Received '2026-03-11T10:00:00' -From 'alice@contoso.test' -To 'ext@fabrikam.test' -Bcc 'boss@contoso.test'
+        $null = Add-FakeMessage 'alice@contoso.test' -Location Archive -Path '\Inbox' -Subject 'Contract Alpha - v1' -Received '2019-02-01T09:00:00' -To 'alice@contoso.test'
+        $null = Add-FakeMessage 'alice@contoso.test' -Location Archive -Path '\2019\Q1' -Subject 'Invoice 2019-001' -Received '2019-01-15T09:00:00' -To 'alice@contoso.test'
         $null = Add-FakeMessage 'alice@contoso.test' -Location Archive -Path '\2019\Q1' -Subject '=SUM(A1:A9) <script>alert(1)</script>' -Received '2019-03-20T09:00:00' -To 'alice@contoso.test'
-        $null = Add-FakeMessage 'alice@contoso.test' -Location Archive -Path '\Junk Email' -Subject 'Contrat Alpha spam' -Received '2019-05-01T09:00:00' -To 'alice@contoso.test'
+        $null = Add-FakeMessage 'alice@contoso.test' -Location Archive -Path '\Junk Email' -Subject 'Contract Alpha spam' -Received '2019-05-01T09:00:00' -To 'alice@contoso.test'
         $null = Add-FakeFolder 'alice@contoso.test' -Location Archive -Path '\Empty'
-        $null = Add-FakeMessage 'alice@contoso.test' -Path '\Deletions' -Recoverable -Subject 'Contrat Alpha deleted' -Received '2024-01-10T09:00:00' -To 'alice@contoso.test'
+        $null = Add-FakeMessage 'alice@contoso.test' -Path '\Deletions' -Recoverable -Subject 'Contract Alpha deleted' -Received '2024-01-10T09:00:00' -To 'alice@contoso.test'
         $null = Add-FakeFolder 'alice@contoso.test' -Path '\Purges' -Recoverable
         $null = Add-FakeMessage 'alice@contoso.test' -Location Archive -Path '\Deletions' -Recoverable -Subject 'Old invoice deleted' -Received '2018-06-10T09:00:00' -To 'alice@contoso.test'
         $null = Add-FakeMessage 'bob@contoso.test' -Path '\Inbox' -Subject 'Hello Bob' -Received '2026-01-02T09:00:00' -To 'bob@contoso.test' -Type '#microsoft.graph.eventMessageRequest'
-        $null = Add-FakeMessage 'bob@contoso.test' -Path '\Inbox' -Subject "L'offre Contrat Alpha" -Received '2026-02-02T09:00:00' -To 'bob@contoso.test'
+        $null = Add-FakeMessage 'bob@contoso.test' -Path '\Inbox' -Subject "Alice's Contract Alpha offer" -Received '2026-02-02T09:00:00' -To 'bob@contoso.test'
     }
 }
 
@@ -185,12 +185,12 @@ Describe 'Configuration and request' {
         $s = New-TestSettings @{ TimeZone = 'Romance Standard Time' }
         $csv = Join-Path $script:RepoRoot 'artifacts\list2.csv'
         "Mail;ArchiveGuid`nbob@contoso.test;`ncarol@contoso.test;01234567-89ab-cdef-0123-456789abcdef" | Set-Content $csv
-        $r = New-MmrRequest -Settings $s -Mailbox 'alice@contoso.test; Bob@contoso.test' -MailboxFile $csv -Start '2026-01-01' -End '2026-01-31' -Subject "Contrat Alpha`nFacture", 'Facture'
+        $r = New-MmrRequest -Settings $s -Mailbox 'alice@contoso.test; Bob@contoso.test' -MailboxFile $csv -Start '2026-01-01' -End '2026-01-31' -Subject "Contract Alpha`nInvoice", 'Invoice'
         ($r.Mailboxes | ForEach-Object Address) | Should -Be @('alice@contoso.test', 'bob@contoso.test', 'carol@contoso.test')
         ($r.Mailboxes | Where-Object Address -eq 'carol@contoso.test').ArchiveGuid | Should -Be '01234567-89ab-cdef-0123-456789abcdef'
         $r.Start | Should -Be ([datetime]'2025-12-31T23:00:00')
         $r.End | Should -Be ([datetime]'2026-01-31T23:00:00')
-        $r.Subject | Should -Be @('Contrat Alpha', 'Facture')
+        $r.Subject | Should -Be @('Contract Alpha', 'Invoice')
         $r.Location | Should -Be @('Primary', 'Archive')
         $r.Layout | Should -Be 'Global'
         (Test-MmrRequest $r).IsValid | Should -BeTrue
@@ -220,7 +220,7 @@ Describe 'Configuration and request' {
             Get-MmrMessageFilter | Should -Be ''
             Get-MmrMessageFilter -Subject 'Alpha' | Should -Be "receivedDateTime ge 1900-01-01T00:00:00Z and contains(subject,'Alpha')"
             Get-MmrMessageFilter -Start ([datetime]'2026-01-01T00:00:00') -End ([datetime]'2026-02-01T00:00:00') | Should -Be 'receivedDateTime ge 2026-01-01T00:00:00Z and receivedDateTime lt 2026-02-01T00:00:00Z'
-            Get-MmrMessageFilter -End ([datetime]'2026-02-01T00:00:00') -Subject "L'offre", 'B' | Should -Be "receivedDateTime ge 1900-01-01T00:00:00Z and receivedDateTime lt 2026-02-01T00:00:00Z and (contains(subject,'L''offre') or contains(subject,'B'))"
+            Get-MmrMessageFilter -End ([datetime]'2026-02-01T00:00:00') -Subject "Alice's offer", 'B' | Should -Be "receivedDateTime ge 1900-01-01T00:00:00Z and receivedDateTime lt 2026-02-01T00:00:00Z and (contains(subject,'Alice''s offer') or contains(subject,'B'))"
         }
     }
 }
@@ -324,24 +324,24 @@ Describe 'Folders and messages' {
     }
 
     It 'keeps the messages of the period and of the subjects; leaves out the folders asked' {
-        $s = Find-Test 'alice@contoso.test', 'bob@contoso.test' -More @{ Subject = 'contrat alpha'; Start = [datetime]'2019-01-01'; End = [datetime]'2026-03-10'; ExcludeFolder = '\Junk*'; RecoverableItems = $true }
+        $s = Find-Test 'alice@contoso.test', 'bob@contoso.test' -More @{ Subject = 'contract alpha'; Start = [datetime]'2019-01-01'; End = [datetime]'2026-03-10'; ExcludeFolder = '\Junk*'; RecoverableItems = $true }
         $r = $s.Result
         ($r.Folders | Where-Object { $_.Location -eq 'Archive' -and $_.Path -eq '\Junk Email' }).Status | Should -Be 'Excluded'
         $report = Export-Test $s
         $rows = @(Read-TestCsv $report.Files.Messages)
         # Alice: primary mailbox, its Recoverable Items, archive; then Bob.
-        $rows.Subject | Should -Be @('Contrat Alpha - v3', 'Contrat Alpha deleted', 'Contrat Alpha - v1', "L'offre Contrat Alpha")
+        $rows.Subject | Should -Be @('Contract Alpha - v3', 'Contract Alpha deleted', 'Contract Alpha - v1', "Alice's Contract Alpha offer")
         $rows[0].Location | Should -Be 'Primary'
-        ($rows | Where-Object Subject -eq 'Contrat Alpha deleted').RecoverableItems | Should -Be 'Yes'
-        ($rows | Where-Object Subject -eq 'Contrat Alpha - v1').Location | Should -Be 'Archive'
+        ($rows | Where-Object Subject -eq 'Contract Alpha deleted').RecoverableItems | Should -Be 'Yes'
+        ($rows | Where-Object Subject -eq 'Contract Alpha - v1').Location | Should -Be 'Archive'
         # Exchange refuses contains() before the date: the filter of every request starts with the date.
-        @($script:Fake.Calls | Where-Object { $_.Url -like '*/messages?*' -and $_.Url -notlike "*`$filter=receivedDateTime ge 2019-01-01T00:00:00Z and receivedDateTime lt 2026-03-11T00:00:00Z and contains(subject,'contrat alpha')*" }).Count | Should -Be 0
+        @($script:Fake.Calls | Where-Object { $_.Url -like '*/messages?*' -and $_.Url -notlike "*`$filter=receivedDateTime ge 2019-01-01T00:00:00Z and receivedDateTime lt 2026-03-11T00:00:00Z and contains(subject,'contract alpha')*" }).Count | Should -Be 0
     }
 
     It 'writes the columns of a message: dates in the time zone, sender, recipients, message ID, folder, location' {
         $s = Find-Test 'alice@contoso.test' -Overrides @{ TimeZone = 'Romance Standard Time' }
         $rows = @(Read-TestCsv (Export-Test $s).Files.Messages)
-        $m = $rows | Where-Object Subject -eq 'Contrat Alpha - v3'
+        $m = $rows | Where-Object Subject -eq 'Contract Alpha - v3'
         $m.Mailbox | Should -Be 'alice@contoso.test'
         $m.MailboxName | Should -Be 'Alice Archive'
         $m.FolderPath | Should -Be '\Inbox'
@@ -355,10 +355,10 @@ Describe 'Folders and messages' {
         $m.HasAttachments | Should -Be 'Yes'
         $m.InternetMessageId | Should -Match '^<.+@fabrikam.test>$'
         $m.Type | Should -Be 'Message'
-        ($rows | Where-Object Subject -eq 'RE: Contrat Alpha').Bcc | Should -Be 'boss@contoso.test'
-        ($rows | Where-Object Subject -eq 'Projet Alpha: kick-off').To | Should -Be 'alice@contoso.test; bob@contoso.test'
+        ($rows | Where-Object Subject -eq 'RE: Contract Alpha').Bcc | Should -Be 'boss@contoso.test'
+        ($rows | Where-Object Subject -eq 'Project Alpha: kick-off').To | Should -Be 'alice@contoso.test; bob@contoso.test'
         # The order of the report: primary mailbox then archive, folder path, newest first.
-        $rows.Subject | Should -Be @('Weekly status', 'Contrat Alpha - v3', 'Projet Alpha: kick-off', 'RE: Contrat Alpha', "'=SUM(A1:A9) <script>alert(1)</script>", 'Facture 2019-001', 'Contrat Alpha - v1', 'Contrat Alpha spam')
+        $rows.Subject | Should -Be @('Weekly status', 'Contract Alpha - v3', 'Project Alpha: kick-off', 'RE: Contract Alpha', "'=SUM(A1:A9) <script>alert(1)</script>", 'Invoice 2019-001', 'Contract Alpha - v1', 'Contract Alpha spam')
         $bob = Find-Test 'bob@contoso.test'
         (@(Read-TestCsv (Export-Test $bob).Files.Messages) | Where-Object Subject -eq 'Hello Bob').Type | Should -Be 'Meeting request'
     }
@@ -453,7 +453,7 @@ Describe 'Folders and messages' {
         $rows.Count | Should -Be 8
         @($rows | Where-Object { $_.To -or $_.Cc -or $_.Bcc }).Count | Should -Be 0
         @($rows | Where-Object RecipientCount).Count | Should -Be 0
-        ($rows | Where-Object Subject -eq 'Contrat Alpha - v3').From | Should -Be 'sender@fabrikam.test'
+        ($rows | Where-Object Subject -eq 'Contract Alpha - v3').From | Should -Be 'sender@fabrikam.test'
     }
 
     It 'retries a page throttled (429) and reports a folder that fails, the others are read' {
@@ -598,7 +598,7 @@ Describe 'Report' {
         $inbox.Messages.Count | Should -Be 2
         $inbox.Children[0].Name | Should -Be 'Projects'
         $inbox.Children[0].Dim | Should -BeTrue
-        $inbox.Children[0].Children[0].Messages[0].Subject | Should -Be 'Projet Alpha: kick-off'
+        $inbox.Children[0].Children[0].Messages[0].Subject | Should -Be 'Project Alpha: kick-off'
         ($primary.Children[2].Children | ForEach-Object Name) | Should -Be @('Deletions', 'Purges')
         $primary.Children[2].Children[0].Messages[0].LocationText | Should -Be 'Primary mailbox - Recoverable Items'
         $alice.Children[1].Found | Should -Be 5
@@ -707,7 +707,7 @@ Describe 'Window' {
 
     It 'shows the folders like Outlook: the tree, the messages of a folder, a message and its content' {
         New-TestTenant
-        $null = Add-FakeMessage 'alice@contoso.test' -Path '\Inbox' -Subject 'Le contrat signé' -Received '2026-05-01T09:00:00' -To 'alice@contoso.test' -Body '<p>Bonjour Alice,</p><p>Voici le contrat signé.</p>'
+        $null = Add-FakeMessage 'alice@contoso.test' -Path '\Inbox' -Subject 'The signed contract' -Received '2026-05-01T09:00:00' -To 'alice@contoso.test' -Body '<p>Hello Alice,</p><p>Here is the signed contract.</p>'
         $s = New-TestSettings
         $f = New-MmrForm -Configuration $s -Theme Light
         $c = $f.Controls
@@ -720,7 +720,7 @@ Describe 'Window' {
             $c.FolderTree.Items.Count | Should -Be 1
             $c.FolderTitle.Text | Should -Match '^Inbox . 3 message'
             $c.FolderMessages.Items.Count | Should -Be 3
-            $c.ReadSubject.Text | Should -Be 'Le contrat signé'
+            $c.ReadSubject.Text | Should -Be 'The signed contract'
             $c.ReadDetails.Text | Should -Match 'Primary mailbox . \\Inbox . alice@contoso.test'
             $c.ReadBody.Text | Should -Match 'needs the application permission Mail.Read'
             # Mail.Read: the content is read, as text.
@@ -729,7 +729,7 @@ Describe 'Window' {
             & $script:Module { $script:Gui.CanReadBody } | Should -BeTrue
             $c.ReadBody.Text | Should -Be 'Reading the content...'
             & $script:Module { Read-MmrGuiBody }
-            $c.ReadBody.Text | Should -Match '^Bonjour Alice,\r?\nVoici le contrat signé\.'
+            $c.ReadBody.Text | Should -Match '^Hello Alice,\r?\nHere is the signed contract\.'
             @($script:Fake.Calls | Where-Object { $_.Url -like '*/messages/*' -and $_.Url -like '*select=body*' }).Count | Should -Be 1
             # The list view: every message of the preview.
             $c.ViewList.IsChecked = $true
@@ -772,7 +772,7 @@ Describe 'Command line' {
     It 'stops with exit code 1 and the list of the problems on a wrong configuration' {
         $path = Join-Path $script:RepoRoot 'artifacts\cli-bad.config.psd1'
         "@{ Graph = @{ MaxConcurrency = 0 } }" | Set-Content $path
-        $out = & pwsh -NoProfile -File (Join-Path $script:Root 'Invoke-MailboxMessageReport.ps1') -ConfigPath $path -Mailbox 'a@contoso.test' 2>&1
+        $out = & pwsh -NoProfile -File (Join-Path $script:Root 'Invoke-MailboxMessageReport.ps1') -DevelopmentMode -ConfigPath $path -Mailbox 'a@contoso.test' 2>&1
         $LASTEXITCODE | Should -Be 1
         ($out -join ' ') | Should -Match 'Graph.MaxConcurrency must be'
         Remove-Item $path
@@ -781,7 +781,7 @@ Describe 'Command line' {
     It 'refuses to run without a mailbox' {
         $path = Join-Path $script:RepoRoot 'artifacts\cli-ok.config.psd1'
         "@{ Logging = @{ Path = '$((Join-Path $script:RepoRoot 'artifacts\test-logs'))' } }" | Set-Content $path
-        $out = & pwsh -NoProfile -File (Join-Path $script:Root 'Invoke-MailboxMessageReport.ps1') -ConfigPath $path 2>&1
+        $out = & pwsh -NoProfile -File (Join-Path $script:Root 'Invoke-MailboxMessageReport.ps1') -DevelopmentMode -ConfigPath $path 2>&1
         $LASTEXITCODE | Should -Be 1
         ($out -join ' ') | Should -Match 'Give the mailbox'
         Remove-Item $path
