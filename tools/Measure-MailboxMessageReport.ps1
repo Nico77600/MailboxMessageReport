@@ -31,7 +31,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 2.1.0
+    Version : 2.1.1
 #>
 #Requires -Version 7.4
 [CmdletBinding()]
@@ -62,7 +62,7 @@ $memory = { [Math]::Round([Diagnostics.Process]::GetCurrentProcess().WorkingSet6
 # the HTML report compresses blocks of 20,000 messages, as different as in a real mailbox.
 $first = 'alice', 'bob', 'chloe', 'david', 'emma', 'franck', 'gabriel', 'hugo', 'ines', 'jules', 'karine', 'louis', 'manon', 'nathan', 'olivia', 'paul', 'quentin', 'rose', 'samuel', 'theo'
 $last = 'martin', 'durand', 'bernard', 'petit', 'roux', 'morel', 'simon', 'laurent', 'lefebvre', 'michel', 'garcia', 'david', 'bertrand', 'robert', 'richard'
-$topics = 'Contrat Alpha', 'Budget 2026', 'Projet Atlas', 'Facture', 'Weekly status', 'Comité de direction', 'Offre commerciale', 'Recrutement', 'Migration Exchange', 'Audit sécurité'
+$topics = 'Contract Alpha', 'Budget 2026', 'Project Atlas', 'Invoice', 'Weekly status', 'Management committee', 'Commercial offer', 'Recruitment', 'Exchange migration', 'Security audit'
 $address = { param([int]$i) $f = $first[$i % $first.Count]; $l = $last[($i * 7) % $last.Count]; @{ emailAddress = @{ name = (Get-Culture).TextInfo.ToTitleCase("$f $l"); address = "$f.$l@contoso.com" } } }
 $distinct = 20
 $bodies = for ($pg = 0; $pg -lt $distinct; $pg++) {

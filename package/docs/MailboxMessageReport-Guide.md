@@ -1,9 +1,9 @@
 ---
 title: Mailbox Message Report
 subtitle: Developer guide
-version: 2.1.0
+version: 2.1.1
 author: Nicolas Fabert
-updated: 2026-10-07
+updated: 2026-11-05
 ---
 
 # Mailbox Message Report — Developer guide
@@ -11,13 +11,15 @@ updated: 2026-10-07
 > Lists the messages of **Exchange Online** mailboxes — the **primary mailbox** and the **In-Place Archive**, and **Recoverable Items** when asked — through **Microsoft Graph only**: no Exchange Online PowerShell, no export. For each message: the date and time received and sent, the subject, the sender, the recipients (To, Cc, Bcc), the Internet message ID, the folder and its path, and whether it is in the primary mailbox, the archive or Recoverable Items. Over a period, for some subjects, for one mailbox or a list; one report for all of them, one per mailbox, or both. Console, window, CSV, JSON and HTML reports. **Read only.**
 
 > [!IMPORTANT]
-> Files downloaded from the Internet may be blocked by Windows and fail to run. Before using this project, unblock every file in the downloaded folder:
+> Files downloaded from the Internet may be blocked by Windows and fail to run. After you extract the release ZIP, unblock every file in the extracted folder:
 >
 > ```powershell
-> Get-ChildItem "C:\Chemin\Du\Dossier" -Recurse -File -Force | Unblock-File
+> Get-ChildItem "C:\Tools\MailboxMessageReport-2.1.1" -Recurse -File -Force | Unblock-File
 > ```
 >
-> Replace the example path with the folder where you downloaded or extracted this project.
+> Replace the example path with the folder where you extracted the ZIP.
+>
+> Only `config\MailboxMessageReport.config.psd1`, `reports\` and `logs\` may change inside the tool folder; the tool refuses to start when another file is added, changed or missing. Keep your own files (mailbox lists, the certificate export) in a separate folder, for example `C:\Tools\MailboxMessageReport-data`.
 
 > [!NOTE]
 > This is the **developer guide**: how the tool works, how the archive is read through Microsoft Graph, the rights, every setting, the window, the report, the architecture, the measurements and how to modify and validate the tool. For the prerequisites and the everyday commands only, read the [user guide](MailboxMessageReport-UserGuide.md).
@@ -34,11 +36,11 @@ shield | Read only, least rights | `Mail.ReadBasic.All` and `User.Read.All` (`Ma
 ## Quick start
 
 ```steps
-Install | Copy the folder, unblock the files, check PowerShell 7.4 or later (chapter 6).
+Install | Extract the release ZIP, unblock the files, check PowerShell 7.4 or later (chapter 6).
 Application | Register an application in Microsoft Entra with `Mail.ReadBasic.All` and `User.Read.All` (application permissions, admin consent) and a certificate (chapter 5).
 Configure | Tenant, application and certificate in `config\MailboxMessageReport.config.psd1` (chapter 7).
 Report | `.\Invoke-MailboxMessageReport.ps1 -Mailbox john.doe@contoso.com` lists every message of his primary mailbox and of his archive.
-Narrow | `-Start 2019-01-01 -End 2019-12-31`, `-Subject 'Contrat Alpha'`, `-Location Archive`, `-IncludeRecoverableItems`, `-MailboxFile .\team.csv -Layout Both`. Or `-Gui` for the window.
+Narrow | `-Start 2019-01-01 -End 2019-12-31`, `-Subject 'Contract Alpha'`, `-Location Archive`, `-IncludeRecoverableItems`, `-MailboxFile C:\Tools\MailboxMessageReport-data\team.csv -Layout Both`. Or `-Gui` for the window.
 ```
 
 > [!TIP]
@@ -111,7 +113,7 @@ GET https://graph.microsoft.com/v1.0/users/MBX:3f8b52d6-...@0b6c7d1e-.../mailFol
 
 ```powershell
 Get-EXOMailbox -ResultSize Unlimited -Archive -Properties ArchiveGuid |
-    Select-Object PrimarySmtpAddress, ArchiveGuid | Export-Csv .\archives.csv -NoTypeInformation
+    Select-Object PrimarySmtpAddress, ArchiveGuid | Export-Csv C:\Tools\MailboxMessageReport-data\archives.csv -NoTypeInformation
 ```
 
 **Why not the mailbox import / export API.** Graph also has an [import and export API](https://learn.microsoft.com/graph/mailbox-import-export-concept-overview) that reaches the archive (and its auxiliary archives), but its items expose only their type, size and dates, and `exportItems` returns an opaque stream made to be imported again, not read. The mail API gives the subject, the sender and the recipients directly.
@@ -194,7 +196,7 @@ Measured with temporary applications in the lab tenant (2026-10-07; the lab scri
 # On the computer that runs the tool, as the account that runs it
 $cert = New-SelfSignedCertificate -Subject 'CN=MailboxMessageReport' -CertStoreLocation Cert:\CurrentUser\My `
     -KeyExportPolicy NonExportable -KeySpec Signature -KeyAlgorithm RSA -KeyLength 2048 -NotAfter (Get-Date).AddYears(2)
-Export-Certificate -Cert $cert -FilePath .\MailboxMessageReport.cer      # upload this file to the application
+Export-Certificate -Cert $cert -FilePath C:\Tools\MailboxMessageReport-data\MailboxMessageReport.cer      # upload this file to the application
 $cert.Thumbprint                                                         # Authentication.CertificateThumbprint
 ```
 
@@ -223,10 +225,10 @@ New-ManagementRoleAssignment -App '<AppId>' -Role 'Application Mail.ReadBasic' -
 | Network | `login.microsoftonline.com` and `graph.microsoft.com` over HTTPS. |
 | Disk | The part files of a run, then the report: about 0.6 KB per message for each (100,000 messages: 60 MB of part files, 55 MB of CSV). |
 
-Copy the folder, then unblock the files downloaded from the Internet:
+Download `MailboxMessageReport-<version>.zip` from the [Releases page](https://github.com/Nico77600/MailboxMessageReport/releases/latest), extract it to `C:\Tools`, then unblock the files downloaded from the Internet:
 
 ```powershell
-Get-ChildItem 'C:\Tools\MailboxMessageReport' -Recurse -File -Force | Unblock-File
+Get-ChildItem 'C:\Tools\MailboxMessageReport-2.1.1' -Recurse -File -Force | Unblock-File
 ```
 
 <!-- icon: settings -->
@@ -281,7 +283,7 @@ A list of mailboxes (`-MailboxFile`, `Search.MailboxFile`, *Load a list...* in t
 | `-ExcludeFolder` | Folders left out (paths with wildcards). |
 | `-Layout` | `Global`, `PerMailbox`, `Both`. |
 | `-Format` | `Csv`, `Html` or both. |
-| `-HtmlMaxMessages` | The most messages of a HTML report for this run (0 to 2,000,000; default `Report.HtmlMaxMessages`, 500,000). |
+| `-HtmlMaxMessages` | Lowers the limit of messages of a HTML report for one run (0 to 200,000); to raise it, change `Report.HtmlMaxMessages` (up to 2,000,000). |
 | `-Gui` | The window. |
 | `-TenantId` · `-AppId` · `-CertificateThumbprint` · `-OutputPath` · `-ConfigPath` | Override the configuration for one run. |
 
@@ -293,10 +295,10 @@ A list of mailboxes (`-MailboxFile`, `Search.MailboxFile`, *Load a list...* in t
 .\Invoke-MailboxMessageReport.ps1 -Mailbox megan.bowen@contoso.com -Location Archive -Start 2019-01-01 -End 2019-12-31
 
 # Where is this contract? Every mailbox of the team, deleted items included
-.\Invoke-MailboxMessageReport.ps1 -MailboxFile .\team.csv -Subject 'Contrat Alpha' -IncludeRecoverableItems
+.\Invoke-MailboxMessageReport.ps1 -MailboxFile C:\Tools\MailboxMessageReport-data\team.csv -Subject 'Contract Alpha' -IncludeRecoverableItems
 
 # One report per mailbox, and one for all of them
-.\Invoke-MailboxMessageReport.ps1 -MailboxFile .\team.csv -Start 2026-01-01 -Layout Both
+.\Invoke-MailboxMessageReport.ps1 -MailboxFile C:\Tools\MailboxMessageReport-data\team.csv -Start 2026-01-01 -Layout Both
 
 # A mailbox with very large folders: the other columns first, fast
 .\Invoke-MailboxMessageReport.ps1 -Mailbox room-paris-01@contoso.com -SkipRecipients -ExcludeFolder '\Deleted Items'
@@ -460,6 +462,37 @@ A link from one guide to the other is written with its GitHub anchor (`MailboxMe
 .\tools\Measure-MailboxMessageReport.ps1        # time of the steps on a large synthetic volume (chapter 13)
 ```
 
+### Developer workflow
+
+The release ZIP is for users. To work on the code, clone the repository. A source tree has no signed manifest, so the entry script is started with `-DevelopmentMode` (a warning says that package integrity is not established). Once the signed manifest is committed, a clone still needs `-DevelopmentMode`, because `CHANGELOG.md` is not in `package\`; a locally edited file needs the manifest removed locally, as described below:
+
+```powershell
+git clone https://github.com/Nico77600/MailboxMessageReport.git
+cd MailboxMessageReport
+.\Run-Tests.ps1                                                          # the tests, offline
+.\package\Invoke-MailboxMessageReport.ps1 -Mailbox <address> -DevelopmentMode
+.\tools\New-MailboxMessageReportPackage.ps1 -Unsigned -Destination C:\Temp\MailboxMessageReport-2.1.1
+```
+
+### Signing and package integrity
+
+A release carries two protections. The PowerShell files (`Invoke-MailboxMessageReport.ps1`, the module, `src\*.ps1`, `src\Test-PackageIntegrity.ps1`) are signed with the owner's code-signing certificate and an RFC 3161 timestamp (`http://ts.ssl.com`). `PackageIntegrity.psd1`, a list of the SHA256 of every shipped file except the configuration, is signed too. `src\Test-PackageIntegrity.ps1` checks the signatures, every hash, the files that are not in the list and reparse points. The entry script runs it before the module is loaded, and the module runs it again when it is imported; a refusal stops the run before any code of the package is compiled or loaded. The C# source `src\MailboxMessageReport.Native.cs` is compiled in memory with `Add-Type` at each start, from the file that was just verified (about 5 seconds, measured); no compiled assembly is written to disk or reused from an earlier run. The configuration `config\MailboxMessageReport.config.psd1` and the folders `reports\` and `logs\` are not protected: they are data.
+
+| Mode | Command | Use |
+|---|---|---|
+| Build | `New-MailboxMessageReportPackage.ps1 -Destination <folder>` | Copies the run-time files from the signed sources; refuses unsigned scripts. |
+| `-Unsigned` | `New-MailboxMessageReportPackage.ps1 -Unsigned -Destination <folder>` | Continuous integration and developer builds. Never a release. |
+| `-Manifest` | `New-MailboxMessageReportPackage.ps1 -Manifest <built folder>` | Writes the unsigned `PackageIntegrity.psd1`; the owner signs it. |
+| `-Seal` | `New-MailboxMessageReportPackage.ps1 -Seal <built folder>` | Verifies the signed manifest against the built folder and `package\`, compares every byte, writes the ZIP with its single root folder `MailboxMessageReport-<version>` and prints its SHA256. |
+
+The builder copies the HTML guides as committed and never rebuilds them (`tools\Build-Documentation.ps1` does, with the same bytes each time). Two builds in a row leave `git status` clean. `-Seal` refuses a folder that holds `data\`, `reports\`, `logs\` or `bin\`, and checks the shipped `CHANGELOG.md` against the root copy.
+
+A developer who edits a protected file after the signed `PackageIntegrity.psd1` is committed deletes `package\PackageIntegrity.psd1` locally (never commits that deletion) and starts the tool with `-DevelopmentMode`. User files (mailbox lists, certificate exports) are given by absolute path in `C:\Tools\MailboxMessageReport-data\`, never inside the tool folder.
+
+The verifier checks the allowed generated folders `reports\` and `logs\` for reparse points before it skips them: a junctioned `reports\` or `logs\` is refused. This is stricter than ExchangeLogReport on purpose, the same in the four tools, and covered by a test.
+
+The order for a release: sign the PowerShell files, build, `-Manifest`, sign the manifest, copy it to `package\PackageIntegrity.psd1`, `-Seal`. Any change to a protected file after signing needs a new manifest. The tests `tests\PackageIntegrity.Tests.ps1` run the real verifier on a fixture; the cases tagged `RealSignature` need a signed tree or the folder named by `MMR_RELEASE_PACKAGE`.
+
 # Appendices
 
 <!-- icon: lifebuoy -->
@@ -469,7 +502,8 @@ A link from one guide to the other is written with its GitHub anchor (`MailboxMe
 |---|---|
 | *Invalid configuration* | Every problem is listed with the setting to change. |
 | `AADSTS700016` · `AADSTS700027` · `AADSTS7000215` | Application ID not in the tenant · certificate not on the application, or another one · wrong secret. |
-| *Certificate ... not found* · *without its private key* | Import the `.pfx` (not the `.cer`) for the account that runs the tool, in `CurrentUser\My` or `LocalMachine\My`. |
+| *Certificate ... not found* · *without its private key* | The certificate is not in the store of the account that runs the tool: create it again as that account (user guide 1.2) and upload the new `.cer` (1.5). |
+| *Package integrity: verifier must have the trusted, timestamped owner signature* · *PackageIntegrity.psd1 is missing* | Not the release ZIP (re-saved or edited file, *Source code* archive): download the release ZIP again. A development tree: `-DevelopmentMode`. |
 | *Connected to tenant ..., but Tenant.TenantId is ...* | The application belongs to another tenant: nothing was read. |
 | *no application permission Mail.ReadBasic.All* | Application permission missing or consent not granted (chapter 5). |
 | *No User.Read.All* · archive *not known* | Add `User.Read.All`, or give the `ArchiveGuid` in a CSV list (chapter 3). |
@@ -480,11 +514,11 @@ A link from one guide to the other is written with its GitHub anchor (`MailboxMe
 | A folder of the archive *Failed* with *auxiliary archive* | Auto-expanding archive: out of scope (chapter 3). |
 | *InefficientFilter* in the log | Should not happen (the filter always starts with the date): send the log line. |
 | *Graph answered a page cut short* in the log | Exchange Online ended a page early: the tool asks it again with fewer messages (chapter 4). Many of them on a folder of meeting messages: `-SkipRecipients`, or `Graph.PageSize = 100`. *N message(s) left out* in the summary: Graph could not return these messages even one at a time; the log gives their position in the folder. With 1.0.0 the run stopped with *Exception calling "AddPage"... Expected depth to be zero at the end of the JSON payload*: use 1.1.1 or later. |
-| The HTML report shows no message | With `-Layout PerMailbox` the messages are in the report of each mailbox (*Mailboxes* tab, `Mailboxes\`). Otherwise the browser does not run the script of the report (a notice says so since 1.1.1), or cannot decompress its messages (*This browser cannot open the messages of the report*): open it in Microsoft Edge or Google Chrome, not in Internet Explorer mode or the preview of OneDrive / SharePoint; the CSV files hold every message. |
-| Excel shows a row cut in two, a row of thousands of columns of addresses | A CSV file of version 1.x with a message of thousands of recipients (a cell longer than 32,767 characters): version 2.0.0 cuts the list in the cell (chapter 11). |
-| *N of M messages are in this page* | More messages than `Report.HtmlMaxMessages`: `-HtmlMaxMessages 2000000`, or one report per mailbox (`-Layout PerMailbox`). |
+| The HTML report shows no message | With `-Layout PerMailbox` the messages are in the report of each mailbox (*Mailboxes* tab, `Mailboxes\`). Otherwise the browser does not run the script of the report (a notice says so), or cannot decompress its messages (*This browser cannot open the messages of the report*): open it in Microsoft Edge or Google Chrome, not in Internet Explorer mode or the preview of OneDrive / SharePoint; the CSV files hold every message. |
+| Excel shows a row cut in two, a row of thousands of columns of addresses | A cell longer than 32,767 characters (the limit of an Excel cell): the tool cuts the list of recipients after its last whole address, with the number of the others (chapter 11). |
+| *N of M messages are in this page* | More messages than `Report.HtmlMaxMessages`: raise the setting (up to 2,000,000), or one report per mailbox (`-Layout PerMailbox`). |
 | A run takes long on one folder | A large folder of meeting messages with recipients: `-SkipRecipients`, or leave the folder out (`-ExcludeFolder '\Deleted Items'`). The progress line gives the time left; the log gives the speed of each mailbox and the 5 slowest folders (chapter 13). |
-| The progress bar stays at 100 % while the messages are read | Version 2.0 and before (a folder cut in equal periods counted its empty slices as read): 2.1.0 shows the share of the messages read. |
+| The progress bar stays at 100 % while the messages are read | The bar shows the share of the messages read, folder by folder; a folder cut into slices counts only the messages read. If it stays at 100 %, send the log. |
 | *Mailbox Message Report 1.0.0 is already loaded in this PowerShell session* | The compiled part of another version is loaded in this process (it cannot be unloaded): open a new PowerShell window. |
 | *Cannot add type* · *... is not allowed in this language mode* when the module loads | PowerShell runs in *Constrained Language* mode (AppLocker or App Control policy): the tool needs *Full Language* (a folder allowed by the policy, or signed scripts). |
 | The window shows “The pipeline has been stopped” | The command that opened it was stopped (*Stop* in an editor): close it and run `-Gui` again. |
@@ -515,7 +549,7 @@ A lab tenant, Microsoft Graph v1.0 and beta, application token, 2026-10-07. Test
 | `$filter=receivedDateTime ge ... and contains(subject,'x')` (with or without `lt`, several `contains` joined by `or`), `$orderby=receivedDateTime desc` | 200, sorted |
 | `contains()` with accents, quotes `"` | found, any case |
 | Permissions (temporary applications) | chapter 5 |
-| Tool, 1 mailbox and its archive, subject *Contrat Alpha* | 453 messages in 7.9 s (3 primary, 450 archive) |
+| Tool, 1 mailbox and its archive, subject *Contract Alpha* | 453 messages in 7.9 s (3 primary, 450 archive) |
 | Tool, 5 mailboxes (archive, no archive, a room, not a mailbox, on-premises), period 2019-2022, Recoverable Items, *Both* | 126 messages; the two mailboxes not read reported with their reason; one report per mailbox read |
 | Tool, 1 mailbox, every message, Recoverable Items | 5,204 messages in 15.1 s |
 | Read of 5,163 messages, pages of 1,000 / 250 / 100 | 11.8 / 10.1 / 13.1 s |
@@ -530,7 +564,7 @@ A lab tenant, Microsoft Graph v1.0 and beta, application token, 2026-10-07. Test
 | nextLink of a page of messages | `%24top=N&%24skip=M`; `$skip` honoured with `$filter` and `$orderby` (items 3 to 5 for `$top=3&$skip=2`) |
 | A CSV row with a list of 10,000 recipients (260,000 characters) opened in Excel (2.0.0, through COM) | as 1.x wrote it: 4 rows × 8,750 columns (the row cut, the rest of the addresses in a row of its own); as 2.0.0 writes it: 3 rows × 23 columns, *RecipientCount* 10,001 |
 | HTML report of 5,275 messages of the lab (two mailboxes, their archives, Recoverable Items, recipients) | 307 KB; filters, sort, detail and export checked in Microsoft Edge |
-| Window, 3 mailboxes, subjects *Contrat Alpha* or *Facture*, Recoverable Items (`Mail.Read`) | 963 messages; folder view: 150 messages in the preview (the first 10 of each folder), the first folder with messages selected, the content of its first message read as text in the reading pane |
+| Window, 3 mailboxes, subjects *Contract Alpha* or *Invoice*, Recoverable Items (`Mail.Read`) | 963 messages; folder view: 150 messages in the preview (the first 10 of each folder), the first folder with messages selected, the content of its first message read as text in the reading pane |
 
 <!-- icon: tag -->
 ## Appendix D - Versions

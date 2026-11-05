@@ -13,7 +13,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 2.1.0
+    Version : 2.1.1
 #>
 #Requires -Version 7.4
 [CmdletBinding()]
@@ -63,7 +63,7 @@ $module = Get-Module MailboxMessageReport
     $null = Add-FakeUser "lee.gu@$d" -Name 'Lee Gu'
     $rnd = [Random]::new(2026)
     $people = @("adele.vance@$d", "lidia.holloway@$d", "nestor.wilke@$d", "joni.sherman@$d", 'jacques.martin@fabrikam.com', 'claire.dupont@northwind.com', 'pradeep.gupta@tailspin.com')
-    $subjects = @('Contrat Alpha - version {0}', 'Projet Atlas : compte rendu n°{0}', 'Facture {1}-{0:000}', 'Budget {1} - arbitrage', 'RE: Offre commerciale Fabrikam ({0})', 'Weekly status #{0}', 'Planning des congés {1}', 'Revue fournisseur Northwind', 'TR: Contrat Alpha - signature', 'Kick-off Atlas : présentation', 'Accord de confidentialité Tailspin', 'Note de frais {1}/{0:00}')
+    $subjects = @('Contract Alpha - version {0}', 'Project Atlas: minutes no. {0}', 'Invoice {1}-{0:000}', 'Budget {1} - trade-off', 'RE: Commercial offer Fabrikam ({0})', 'Weekly status #{0}', 'Leave planning {1}', 'Northwind supplier review', 'FW: Contract Alpha - signature', 'Kick-off Atlas: presentation', 'Tailspin confidentiality agreement', 'Expense report {1}/{0:00}')
     $add = {
         param([string]$User, [string]$Location, [string]$Path, [int]$Count, [datetime]$From, [datetime]$To, [switch]$Recoverable, [switch]$Sent)
         $span = ($To - $From).TotalMinutes
@@ -85,14 +85,14 @@ $module = Get-Module MailboxMessageReport
         & $add $u Primary '\Inbox\Projects\Atlas' ([int](9 * $k)) ([datetime]'2026-02-01') ([datetime]'2026-09-30')
         & $add $u Primary '\Sent Items' ([int](12 * $k)) ([datetime]'2026-05-01') ([datetime]'2026-10-06') -Sent
         & $add $u Archive '\Inbox' ([int](30 / $k)) ([datetime]'2019-01-01') ([datetime]'2024-12-31')
-        & $add $u Archive '\Inbox\Contrats' 14 ([datetime]'2020-03-01') ([datetime]'2024-11-30')
+        & $add $u Archive '\Inbox\Contracts' 14 ([datetime]'2020-03-01') ([datetime]'2024-11-30')
         & $add $u Archive '\Sent Items' ([int](16 * $k)) ([datetime]'2019-01-01') ([datetime]'2024-12-31') -Sent
         & $add $u Archive '\2018' ([int](18 / $k)) ([datetime]'2018-01-02') ([datetime]'2018-12-28')
         & $add $u Primary '\Deletions' ([int](4 * $k) + 1) ([datetime]'2025-09-01') ([datetime]'2026-08-30') -Recoverable
         $null = Add-FakeFolder $u -Path '\Purges' -Recoverable
     }
-    $atlas = '<p>Bonjour Megan,</p><p>Voici le compte rendu du comité Atlas de ce matin.</p><p>1. Planning : la bascule est confirmée pour le 14 novembre, la répétition générale le 7.</p><p>2. Budget : le dépassement de 4 % est validé par la direction financière.</p><p>3. Risques : la migration des archives est le point d''attention ; Alex prépare le rapport des boîtes et de leurs archives d''ici vendredi.</p><p>Prochain comité le 21 octobre.</p><p>Bonne journée,<br>Lidia</p>'
-    $null = Add-FakeMessage "megan.bowen@$d" -Path '\Inbox' -Subject 'Projet Atlas : compte rendu du comité' -Received ([datetime]'2026-10-06T16:42:00') -From "lidia.holloway@$d" -FromName 'Lidia Holloway' -To "megan.bowen@$d", "alex.wilber@$d" -Cc "adele.vance@$d" -Attachments -Body $atlas
+    $atlas = '<p>Hello Megan,</p><p>Here are the minutes of this morning''s Atlas committee.</p><p>1. Schedule: the cut-over is confirmed for 14 November, the dress rehearsal for the 7th.</p><p>2. Budget: the 4 % overrun is approved by the finance director.</p><p>3. Risks: the migration of the archives is the point to watch; Alex prepares the report of the mailboxes and their archives by Friday.</p><p>Next committee on 21 October.</p><p>Have a good day,<br>Lidia</p>'
+    $null = Add-FakeMessage "megan.bowen@$d" -Path '\Inbox' -Subject 'Project Atlas: committee minutes' -Received ([datetime]'2026-10-06T16:42:00') -From "lidia.holloway@$d" -FromName 'Lidia Holloway' -To "megan.bowen@$d", "alex.wilber@$d" -Cc "adele.vance@$d" -Attachments -Body $atlas
     & $add "lee.gu@$d" Primary '\Inbox' 20 ([datetime]'2025-11-01') ([datetime]'2026-10-06')
     & $add "lee.gu@$d" Primary '\Sent Items' 8 ([datetime]'2025-11-01') ([datetime]'2026-10-06') -Sent
     $null = Add-FakeFolder "lee.gu@$d" -Path '\Junk Email'
@@ -151,14 +151,14 @@ $module = Get-Module MailboxMessageReport
     $running.Form.WindowStartupLocation = 'Manual'; $running.Form.Left = -4000; $running.Form.ShowInTaskbar = $false; $running.Form.Show()
     $running.Controls.Mailbox.Text = "megan.bowen@$d" + [Environment]::NewLine + "alex.wilber@$d" + [Environment]::NewLine + "lee.gu@$d"
     $running.Controls.StartDate.SelectedDate = [datetime]'2019-01-01'
-    $running.Controls.Subject.Text = 'Contrat Alpha'
+    $running.Controls.Subject.Text = 'Contract Alpha'
     $running.Controls.ConnectionExpander.IsExpanded = $false
     Start-MmrGuiRun 'Reading...'
     foreach ($line in @(
             @('Step', '[1/5] Microsoft Graph'), @('Ok', 'Application Mailbox Message Report · tenant contoso.onmicrosoft.com'), @('Info', 'Permissions: Mail.ReadBasic.All, User.Read.All'),
             @('Step', '[2/5] Mailboxes (3)'), @('Ok', "Megan Bowen <megan.bowen@$d> · primary mailbox · archive"), @('Ok', "Alex Wilber <alex.wilber@$d> · primary mailbox · archive"), @('Ok', "Lee Gu <lee.gu@$d> · primary mailbox · no archive"),
             @('Step', '[3/5] Folders'), @('Ok', 'Primary mailbox: 46 folders · 31 to read · 15 empty'), @('Ok', 'Archive: 38 folders · 29 to read · 9 empty'),
-            @('Step', '[4/5] Messages'), @('Info', "received from 2019-01-01 00:00 · subject contains 'Contrat Alpha'"), @('Info', '2 large folder(s) read in 14 slices of their dates, side by side'),
+            @('Step', '[4/5] Messages'), @('Info', "received from 2019-01-01 00:00 · subject contains 'Contract Alpha'"), @('Info', '2 large folder(s) read in 14 slices of their dates, side by side'),
             @('Progress', '0.612|38/60 folders read · 1,284 messages|about 1 min 10 s left'))) { Add-MmrGuiLine $line[0] $line[1] }
     & $render $running (Join-Path $Destination 'gui-progress-light.png')
     Stop-MmrGuiRun
